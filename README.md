@@ -276,6 +276,55 @@ mv bot/accounts.json bot/accounts.json.bak
 npm start
 ```
 
+### Menjalankan multi-account di Render (Secret File)
+
+Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
+
+1. Di Render Dashboard, buka service → **Environment → Secret Files →
+   Add Secret File**.
+2. Filename:
+
+   ```text
+   accounts.json
+   ```
+
+3. Contents (isi dengan konfigurasi akun masing-masing):
+
+   ```json
+   [
+     {
+       "name": "akun1",
+       "token": "YOUR_DISCORD_TOKEN",
+       "voiceChannelId": "YOUR_VOICE_CHANNEL_ID",
+       "rpc": {
+         "enabled": true,
+         "applicationId": "YOUR_APPLICATION_ID",
+         "name": "Custom RPC",
+         "details": "",
+         "state": "",
+         "largeImage": "",
+         "largeText": "",
+         "smallImage": "",
+         "smallText": "",
+         "button1Name": "",
+         "button1Url": "",
+         "button2Name": "",
+         "button2Url": "",
+         "startTimestamp": true
+       }
+     }
+   ]
+   ```
+
+4. Deploy ulang. Aplikasi otomatis mendeteksi secret file tersebut
+   (dicari berurutan di `bot/accounts.json`, `accounts.json` di root
+   service, lalu `/etc/secrets/accounts.json`) dan berjalan dalam
+   multi-account mode.
+
+`accounts.json` berisi token sehingga **tidak boleh di-commit ke Git**
+(file ini sudah masuk `.gitignore`; yang di-commit hanya
+`bot/accounts.example.json` sebagai template).
+
 ### Security
 
 * `bot/accounts.json` berisi token dan **sudah masuk `.gitignore`** — file
@@ -299,8 +348,8 @@ npm start
    - `DISCORD_TOKEN`: token akun Discord.
    - `VOICE_CHANNEL_ID`: ID voice channel tujuan.
    - Variable `RPC_*` (opsional, lihat section Custom Rich Presence).
-   - Untuk multi-account, sediakan file `bot/accounts.json` (lihat section
-     Multi Account).
+   - Untuk multi-account, gunakan Secret File `accounts.json` atau sediakan
+     file `bot/accounts.json` (lihat section Multi Account).
 
 Health check tersedia melalui port yang diberikan oleh environment `PORT`.
 

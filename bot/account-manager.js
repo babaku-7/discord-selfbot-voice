@@ -7,7 +7,12 @@ const { setupVoiceChannel } = require('./voice-handler.js');
 const { setupRichPresence, getRpcConfig } = require('./rpc.js');
 const { Client } = require('../src/index.js');
 
-const ACCOUNTS_PATH = path.join(__dirname, 'accounts.json');
+const LOCAL_ACCOUNTS_PATH = path.join(__dirname, 'accounts.json');
+const ROOT_ACCOUNTS_PATH = path.join(process.cwd(), 'accounts.json');
+const RENDER_ACCOUNTS_PATH = '/etc/secrets/accounts.json';
+
+/** @deprecated Gunakan LOCAL_ACCOUNTS_PATH. Disimpan untuk kompatibilitas. */
+const ACCOUNTS_PATH = LOCAL_ACCOUNTS_PATH;
 
 const STATUS = {
   STARTING: 'starting',
@@ -19,14 +24,50 @@ const STATUS = {
 };
 
 /**
- * Membaca bot/accounts.json.
+ * Urutan pencarian accounts.json (prioritas tertinggi dulu):
+ * 1. Override via env ACCOUNTS_PATH (opsional, untuk host lain/testing)
+ * 2. bot/accounts.json (repository lokal)
+ * 3. accounts.json di root service (Render Secret File non-Docker)
+ * 4. /etc/secrets/accounts.json (Render Secret File)
+ * @returns {string[]} Daftar path kandidat
+ */
+function getAccountsSearchPaths() {
+  const candidates = [];
+  if (process.env.ACCOUNTS_PATH && process.env.ACCOUNTS_PATH.trim()) {
+    candidates.push(process.env.ACCOUNTS_PATH.trim());
+  }
+  candidates.push(LOCAL_ACCOUNTS_PATH, ROOT_ACCOUNTS_PATH, RENDER_ACCOUNTS_PATH);
+  return candidates;
+}
+
+/**
+ * Mencari file accounts.json di lokasi yang didukung.
+ * @returns {?string} Path pertama yang ada, atau null jika tidak ada satupun
+ */
+function resolveAccountsPath() {
+  for (const candidate of getAccountsSearchPaths()) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // Abaikan kandidat yang tidak bisa dicek, lanjut ke berikutnya.
+    }
+  }
+  return null;
+}
+
+/**
+ * Membaca accounts.json dari lokasi pertama yang ditemukan.
+ * @param {string} [accountsPath] Path eksplisit (melewati pencarian); jika dihilangkan, dicari berurutan
  * @returns {?Array} Daftar account mentah, atau null jika file tidak ada (mode legacy .env)
  * @throws Jika JSON corrupt atau bukan array (fatal, hentikan startup)
  */
-function loadAccountsFile(accountsPath = ACCOUNTS_PATH) {
+function loadAccountsFile(accountsPath) {
+  const resolved = accountsPath || resolveAccountsPath();
+  if (!resolved) return null;
+
   let raw;
   try {
-    raw = fs.readFileSync(accountsPath, 'utf8');
+    raw = fs.readFileSync(resolved, 'utf8');
   } catch (error) {
     if (error && error.code === 'ENOENT') return null;
     throw error;
@@ -36,10 +77,10 @@ function loadAccountsFile(accountsPath = ACCOUNTS_PATH) {
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`bot/accounts.json corrupt (JSON tidak valid): ${error.message}`);
+    throw new Error(`accounts.json corrupt (JSON tidak valid) di ${resolved}: ${error.message}`);
   }
 
-  if (!Array.isArray(parsed)) throw new Error('bot/accounts.json harus berisi array of account.');
+  if (!Array.isArray(parsed)) throw new Error(`accounts.json di ${resolved} harus berisi array of account.`);
   return parsed;
 }
 
@@ -195,6 +236,11 @@ function startAll(accounts, deps = {}) {
 module.exports = {
   STATUS,
   ACCOUNTS_PATH,
+  LOCAL_ACCOUNTS_PATH,
+  ROOT_ACCOUNTS_PATH,
+  RENDER_ACCOUNTS_PATH,
+  getAccountsSearchPaths,
+  resolveAccountsPath,
   loadAccountsFile,
   validateAccount,
   accountFromEnv,

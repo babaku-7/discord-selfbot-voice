@@ -6,6 +6,7 @@ const http = require('http');
 const process = require('node:process');
 const {
   loadAccountsFile,
+  resolveAccountsPath,
   validateAccount,
   accountFromEnv,
   startAll,
@@ -22,7 +23,7 @@ function validateLegacyEnvVars() {
 }
 
 /**
- * Jika bot/accounts.json tersedia -> MULTI ACCOUNT MODE.
+ * Jika accounts.json tersedia (lokal, root service, atau /etc/secrets) -> MULTI ACCOUNT MODE.
  * Jika tidak ada -> LEGACY SINGLE ACCOUNT MODE (.env).
  */
 function resolveAccounts() {
@@ -36,11 +37,11 @@ function resolveAccounts() {
 
   if (raw === null) {
     validateLegacyEnvVars();
-    console.log('[INFO] bot/accounts.json tidak ditemukan, memakai mode single-account (.env).');
+    console.log('[INFO] accounts.json tidak ditemukan, memakai mode single-account (.env).');
     return { mode: 'single', accounts: [accountFromEnv()] };
   }
 
-  console.log(`[INFO] Multi-account mode: ${raw.length} akun ditemukan di bot/accounts.json.`);
+  console.log(`[INFO] Multi-account mode: ${raw.length} akun ditemukan di ${resolveAccountsPath()}.`);
   const usedNames = new Set();
   const accounts = [];
   raw.forEach((rawAccount, index) => {
@@ -53,7 +54,7 @@ function resolveAccounts() {
   });
 
   if (accounts.length === 0) {
-    console.error('[ERROR] Tidak ada account valid di bot/accounts.json, process dihentikan.');
+    console.error('[ERROR] Tidak ada account valid di accounts.json, process dihentikan.');
     process.exit(1);
   }
 
