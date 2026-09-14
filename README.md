@@ -176,6 +176,120 @@ Online
 > Project ini menggunakan selfbot/user account, dan penggunaan selfbot dapat
 > bertentangan dengan Discord Terms of Service.
 
+## Multi Account
+
+Satu process Node.js dapat menjalankan beberapa akun Discord secara
+bersamaan. Setiap akun memiliki `Client` sendiri, sehingga login, RPC, dan
+voice channel berjalan independen. Jika satu akun gagal, akun lain tetap
+berjalan.
+
+### Cara mengaktifkan multi-account
+
+1. Salin template konfigurasi:
+
+   ```bash
+   cp bot/accounts.example.json bot/accounts.json
+   ```
+
+2. Isi `bot/accounts.json` dengan token dan konfigurasi masing-masing akun.
+
+3. Jalankan seperti biasa:
+
+   ```bash
+   npm start
+   ```
+
+Jika `bot/accounts.json` tersedia, aplikasi memakai **multi-account mode**.
+Jika file tersebut tidak ada, aplikasi otomatis memakai **single-account
+mode** (konfigurasi `.env` lama: `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`,
+`RPC_*`).
+
+### Format konfigurasi
+
+`bot/accounts.json` berisi array, setiap object adalah satu akun:
+
+```json
+[
+  {
+    "name": "akun1",
+    "token": "TOKEN_AKUN_1",
+    "voiceChannelId": "VOICE_CHANNEL_ID_1",
+    "rpc": {
+      "enabled": true,
+      "applicationId": "APPLICATION_ID_1",
+      "name": "Custom RPC Akun 1",
+      "details": "Playing",
+      "state": "Online",
+      "largeImage": "",
+      "largeText": "",
+      "smallImage": "",
+      "smallText": "",
+      "button1Name": "",
+      "button1Url": "",
+      "button2Name": "",
+      "button2Url": "",
+      "startTimestamp": true
+    }
+  },
+  {
+    "name": "akun2",
+    "token": "TOKEN_AKUN_2",
+    "voiceChannelId": "VOICE_CHANNEL_ID_2",
+    "rpc": {
+      "enabled": true,
+      "applicationId": "APPLICATION_ID_2",
+      "name": "Custom RPC Akun 2",
+      "details": "Another Activity",
+      "state": "Indonesia",
+      "largeImage": "",
+      "largeText": "",
+      "smallImage": "",
+      "smallText": "",
+      "button1Name": "",
+      "button1Url": "",
+      "button2Name": "",
+      "button2Url": "",
+      "startTimestamp": true
+    }
+  }
+]
+```
+
+* `name` — nama akun untuk prefix log (`[ACCOUNT: akun1]`). Wajib unik.
+* `token` — token akun Discord. Wajib; akun dengan token kosong dilewati.
+* `voiceChannelId` — voice channel akun tersebut. Boleh kosong (voice
+  dilewati untuk akun itu). Setiap akun dapat memakai channel berbeda, dan
+  dua akun boleh memakai channel yang sama.
+* `rpc` — konfigurasi Rich Presence akun tersebut (opsional). Field-nya sama
+  seperti variable `RPC_*` pada section Custom Rich Presence. Setiap akun
+  memiliki RPC dan timestamp sendiri yang tidak tertukar.
+
+Jangan menaruh token asli di README, issue, atau commit.
+
+### Cara kembali ke mode single-account
+
+Hapus atau rename `bot/accounts.json`, lalu pastikan `.env` berisi
+`DISCORD_TOKEN`, `VOICE_CHANNEL_ID`, dan (opsional) `RPC_*`:
+
+```bash
+mv bot/accounts.json bot/accounts.json.bak
+npm start
+```
+
+### Security
+
+* `bot/accounts.json` berisi token dan **sudah masuk `.gitignore`** — file
+  ini tidak akan ter-commit. Yang di-commit hanya
+  `bot/accounts.example.json` sebagai template.
+* Token tidak pernah dicetak ke log (bahkan saat login gagal, yang tampil
+  hanya pesan error tanpa token).
+
+> [!WARNING]
+> Penggunaan selfbot/automasi user token dapat melanggar Discord Terms of
+> Service. Setiap akun yang dijalankan adalah tanggung jawab pemiliknya;
+> kegagalan atau penalti pada satu akun tidak memengaruhi akun lain secara
+> teknis, tetapi semua akun menanggung risiko yang sama.
+
 ## Deploy ke Render
 
 1. Hubungkan repository ke Render sebagai Web Service.
@@ -185,6 +299,8 @@ Online
    - `DISCORD_TOKEN`: token akun Discord.
    - `VOICE_CHANNEL_ID`: ID voice channel tujuan.
    - Variable `RPC_*` (opsional, lihat section Custom Rich Presence).
+   - Untuk multi-account, sediakan file `bot/accounts.json` (lihat section
+     Multi Account).
 
 Health check tersedia melalui port yang diberikan oleh environment `PORT`.
 

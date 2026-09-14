@@ -1,0 +1,23 @@
+[
+  {
+    "name": "akun1",
+    "token": "YOUR_DISCORD_TOKEN",
+    "voiceChannelId": "YOUR_VOICE_CHANNEL_ID",
+    "rpc": {
+      "enabled": true,
+      "applicationId": "YOUR_APPLICATION_ID",
+      "name": "Custom RPC",
+      "details": "",
+      "state": "",
+      "largeImage": "",
+      "largeText": "",
+      "smallImage": "",
+      "smallText": "",
+      "button1Name": "",
+      "button1Url": "",
+      "button2Name": "",
+      "button2Url": "",
+      "startTimestamp": true
+    }
+  }
+]

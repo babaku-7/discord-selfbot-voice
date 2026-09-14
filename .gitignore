@@ -26,6 +26,7 @@ pids
 
 # Env
 .env
+bot/accounts.json
 test/auth.json
 test/auth.js
 docs/deploy/deploy_key
