@@ -5,6 +5,7 @@ require('dotenv').config();
 const http = require('http');
 const process = require('node:process');
 const { setupVoiceChannel } = require('./voice-handler.js');
+const { setupRichPresence } = require('./rpc.js');
 const { Client } = require('../src/index.js');
 
 function validateEnvVars() {
@@ -25,6 +26,11 @@ const client = new Client({
 
 client.once('ready', () => {
   console.log(`[READY] Berhasil login sebagai ${client.user.tag}`);
+  try {
+    setupRichPresence(client);
+  } catch (error) {
+    console.error('[RPC] Failed to setup Rich Presence:', error);
+  }
   setupVoiceChannel(client);
 });
 

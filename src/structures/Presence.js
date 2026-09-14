@@ -372,6 +372,17 @@ class Activity {
       this.party = null;
     }
 
+    // Preserve send-only fields (e.g. RichPresence button urls in
+    // `metadata.button_urls` and join/spectate `secrets`) so they survive
+    // the ClientPresence Activity conversion and are actually broadcast.
+    if ('metadata' in data && data.metadata) {
+      this.metadata = data.metadata;
+    }
+
+    if ('secrets' in data && data.secrets) {
+      this.secrets = data.secrets;
+    }
+
     /**
      * Assets for rich presence
      * @type {?RichPresenceAssets}
@@ -421,7 +432,16 @@ class Activity {
 
   toJSON(...props) {
     return Util.clearNullOrUndefinedObject({
-      ...Util.flatten(this, ...props),
+      ...Util.flatten(
+        this,
+        {
+          applicationId: 'application_id',
+          sessionId: 'session_id',
+          syncId: 'sync_id',
+          createdTimestamp: 'created_at',
+        },
+        ...props,
+      ),
       type: typeof this.type === 'number' ? this.type : ActivityTypes[this.type],
     });
   }
