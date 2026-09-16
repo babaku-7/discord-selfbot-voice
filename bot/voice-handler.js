@@ -76,6 +76,12 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
     voiceChannelId = undefined;
   }
   const prefix = logPrefix(options.accountName);
+  const targetChannelId = voiceChannelId || ENV_VOICE_CHANNEL_ID;
+
+  if (!targetChannelId) {
+    return;
+  }
+
   const delay = options.reconnectDelay ?? 5000;
   let reconnectTimer = null;
   let joining = false;
@@ -83,7 +89,7 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
 
   const isConnectedToTarget = () => {
     const connection = client.voice?.connection;
-    return connection?.channel?.id === (voiceChannelId || ENV_VOICE_CHANNEL_ID) && connection.status !== 4;
+    return Boolean(connection) && connection.channel?.id === targetChannelId && connection.status !== 4;
   };
 
   const scheduleReconnect = (reason) => {
@@ -125,7 +131,6 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
   client.on('voiceStateUpdate', (oldState, newState) => {
     if (oldState.member?.id !== client.user?.id) return;
 
-    const targetChannelId = voiceChannelId || ENV_VOICE_CHANNEL_ID;
     const leftTarget = oldState.channelId === targetChannelId && newState.channelId !== targetChannelId;
     const joinedAnotherChannel = newState.channelId && newState.channelId !== targetChannelId;
 
