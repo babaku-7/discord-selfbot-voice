@@ -42,7 +42,7 @@ async function joinVoiceChannel(client, voiceChannelId, options = {}) {
       }
       return;
     }
-    await client.voice.joinChannel(channel, { selfMute: true });
+    const connection = await client.voice.joinChannel(channel, { selfMute: true });
     if (prefix) log(`Joining voice channel... Berhasil bergabung: ${channel.name} (Muted)`);
     else console.log(`[INFO] Berhasil bergabung ke voice channel: ${channel.name} (Muted)`);
     if (typeof options.onVoiceConnected === 'function') {
@@ -52,18 +52,16 @@ async function joinVoiceChannel(client, voiceChannelId, options = {}) {
         error(`onVoiceConnected gagal: ${callbackError.message}`);
       }
     }
+    return connection;
   } catch (err) {
     if (channel && err.message.includes('Connection not established within 15 seconds')) {
-      if (prefix) log(`Berhasil bergabung ke voice channel: ${channel.name} (Muted), meskipun ada peringatan timeout.`);
-      else {
-        console.log(
-          `[INFO] Berhasil bergabung ke voice channel: ${channel.name} (Muted), meskipun ada peringatan timeout.`,
-        );
-      }
+      if (prefix) error(`Koneksi ke voice channel timeout: ${channel.name}.`);
+      else console.error(`[ERROR] Koneksi ke voice channel timeout: ${channel.name}.`);
     } else {
       if (prefix) error(`Gagal bergabung ke voice channel: ${err.message}`);
       else console.error(`[ERROR] Gagal bergabung ke voice channel: ${err.message}`);
     }
+    return null;
   }
 }
 
@@ -78,15 +76,68 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
     voiceChannelId = undefined;
   }
   const prefix = logPrefix(options.accountName);
+  const delay = options.reconnectDelay ?? 5000;
+  let reconnectTimer = null;
+  let joining = false;
+  let activeConnection = null;
 
-  joinVoiceChannel(client, voiceChannelId, options);
+  const isConnectedToTarget = () => {
+    const connection = client.voice?.connection;
+    return connection?.channel?.id === (voiceChannelId || ENV_VOICE_CHANNEL_ID) && connection.status !== 4;
+  };
+
+  const scheduleReconnect = (reason) => {
+    if (reconnectTimer || joining || isConnectedToTarget()) return;
+
+    if (prefix) console.log(`${prefix} ${reason} Mencoba bergabung kembali dalam ${delay / 1000} detik...`);
+    else console.log(`[WARN] ${reason} Mencoba bergabung kembali dalam ${delay / 1000} detik...`);
+
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      attemptJoin(true);
+    }, delay);
+    reconnectTimer.unref?.();
+  };
+
+  const attemptJoin = async (retryOnFailure = false) => {
+    if (joining || isConnectedToTarget()) return;
+
+    joining = true;
+    const connection = await joinVoiceChannel(client, voiceChannelId, options);
+    joining = false;
+
+    if (connection) {
+      activeConnection = connection;
+      connection.once('disconnect', () => {
+        if (activeConnection === connection) activeConnection = null;
+        if (client.voice.connection === connection) client.voice.connection = null;
+        scheduleReconnect('Koneksi voice terputus.');
+      });
+    } else if (retryOnFailure) {
+      scheduleReconnect('Gagal menyambungkan ke voice channel.');
+    }
+  };
+
+  // Initial join tidak menunggu event voiceStateUpdate supaya tidak race dengan
+  // state update yang dikirim Discord saat proses autentikasi voice.
+  attemptJoin();
 
   client.on('voiceStateUpdate', (oldState, newState) => {
-    if (oldState.member?.id === client.user.id && oldState.channelId && !newState.channelId) {
-      if (prefix) console.log(`${prefix} Koneksi voice terputus. Mencoba bergabung kembali...`);
-      else console.log('[WARN] Koneksi voice channel terputus. Mencoba untuk bergabung kembali...');
-      setTimeout(() => joinVoiceChannel(client, voiceChannelId, options), 5000);
+    if (oldState.member?.id !== client.user?.id) return;
+
+    const targetChannelId = voiceChannelId || ENV_VOICE_CHANNEL_ID;
+    const leftTarget = oldState.channelId === targetChannelId && newState.channelId !== targetChannelId;
+    const joinedAnotherChannel = newState.channelId && newState.channelId !== targetChannelId;
+
+    if (leftTarget || joinedAnotherChannel) {
+      scheduleReconnect('Koneksi voice channel berubah atau terputus.');
     }
+  });
+
+  // Gateway reconnect tidak selalu menghasilkan VOICE_STATE_UPDATE untuk akun
+  // sendiri. Cek ulang saat READY diterima kembali.
+  client.on('ready', () => {
+    if (!isConnectedToTarget()) scheduleReconnect('Gateway tersambung kembali.');
   });
 }
 
