@@ -4,6 +4,7 @@
 // - readiness: 200 kalau minimal 1 akun ready, 503 kalau tidak ada.
 // - liveness: /health/live selalu 200.
 // - route selain itu: 404.
+// - HEALTH_TOKEN opsional: 401 tanpa/salah token saat diaktifkan.
 // - response TIDAK pernah mengandung token/credential.
 
 const assert = require('node:assert');
@@ -74,6 +75,39 @@ function close(server) {
       assert.strictEqual(body.ready, 0);
       assert.strictEqual(body.total, 3);
       console.log('PASS 2: /health 503 saat tidak ada akun ready (starting/logging_in/voice_connecting belum dihitung)');
+    } finally {
+      await close(server);
+    }
+  }
+
+  // 3. HEALTH_TOKEN: proteksi opsional.
+  {
+    const registry = new Map([['a', { status: STATUS.READY }]]);
+    const server = createHealthServer(registry, { token: 'secret-token' });
+    const port = await listen(server);
+    try {
+      const noToken = await fetch(`http://127.0.0.1:${port}/health`);
+      assert.strictEqual(noToken.status, 401, 'tanpa token -> 401');
+
+      const wrongToken = await fetch(`http://127.0.0.1:${port}/health/live`, {
+        headers: { authorization: 'Bearer salah' },
+      });
+      assert.strictEqual(wrongToken.status, 401, 'token salah -> 401');
+
+      const noTokenUnknownRoute = await fetch(`http://127.0.0.1:${port}/debug`);
+      assert.strictEqual(noTokenUnknownRoute.status, 401, 'semua route tertutup token (bukan hanya /health)');
+
+      const withToken = await fetch(`http://127.0.0.1:${port}/health`, {
+        headers: { authorization: 'Bearer secret-token' },
+      });
+      assert.strictEqual(withToken.status, 200, 'token benar -> 200');
+
+      const liveWithToken = await fetch(`http://127.0.0.1:${port}/health/live`, {
+        headers: { authorization: 'Bearer secret-token' },
+      });
+      assert.strictEqual(liveWithToken.status, 200, 'liveness dengan token -> 200');
+
+      console.log('PASS 3: HEALTH_TOKEN (401 tanpa/salah token, 200 dengan token, semua route terlindungi)');
     } finally {
       await close(server);
     }

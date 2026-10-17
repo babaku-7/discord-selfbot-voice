@@ -8,7 +8,7 @@
 // 2. Koneksi voice basi di-disconnect sebelum rejoin (anti-leak/OOM).
 // 3. Watchdog memaksa rejoin walaupun tidak ada event yang terpicu.
 // 4. Backoff memperlambat retry (bukan spam tiap 5 detik).
-// 5. stop() membersihkan timer + listener (lifecycle tidak bocor).
+// 5. stop() membersihkan timer + listener + memutus koneksi voice aktif.
 // 6. Channel kosong di mode multi-account TIDAK fallback ke env VOICE_CHANNEL_ID.
 
 const assert = require('node:assert');
@@ -18,7 +18,7 @@ const CHANNEL_ID = '123456789012345678';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function makeClient() {
-  const state = { attempts: 0, staleDisconnects: 0, fetchCalls: [] };
+  const state = { attempts: 0, staleDisconnects: 0, connectionDisconnects: 0, fetchCalls: [] };
   const channel = { id: CHANNEL_ID, name: 'test-voice', isVoice: () => true };
   const listeners = new Map();
 
@@ -54,7 +54,9 @@ function makeClient() {
       channel,
       status: 0,
       once() {},
-      disconnect() {},
+      disconnect: () => {
+        state.connectionDisconnects += 1;
+      },
     };
     client.voice.connection = connection;
     return connection;
@@ -165,6 +167,8 @@ function makeClient() {
     handle.stop();
     assert.strictEqual(client.listenerCount('voiceStateUpdate'), 0, 'listener voiceStateUpdate harus dilepas');
     assert.strictEqual(client.listenerCount('ready'), 0, 'listener ready harus dilepas');
+    assert.strictEqual(state.connectionDisconnects, 1, 'stop() harus memutus koneksi voice aktif');
+    assert.strictEqual(client.voice.connection, null, 'referensi voice connection harus dibersihkan');
 
     // Simulasikan koneksi hilang tanpa event + event yang dulu memicu rejoin.
     client.voice.connection = null;
@@ -174,7 +178,7 @@ function makeClient() {
     assert.strictEqual(state.attempts, 1, 'setelah stop() tidak boleh ada join attempt (termasuk dari watchdog)');
 
     handle.stop(); // idempotent
-    console.log('PASS 5: stop() membersihkan listener + timer (idempotent)');
+    console.log('PASS 5: stop() membersihkan listener + timer + memutus voice connection (idempotent)');
   }
 
   // 6. Channel null: multi-account tidak fallback ke env; legacy tetap fallback.

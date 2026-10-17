@@ -182,6 +182,9 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
       if (stopped) {
         // Proses sedang dihentikan: jangan tinggalkan koneksi menggantung.
         if (connection && typeof connection.disconnect === 'function') {
+          if (client.voice && client.voice.connection === connection) {
+            client.voice.connection = null;
+          }
           try {
             connection.disconnect();
           } catch {
@@ -264,8 +267,27 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
       client.off('voiceStateUpdate', handleVoiceStateUpdate);
       client.off('ready', handleReady);
     }
-    if (activeConnection && typeof activeConnection.off === 'function') {
-      activeConnection.off('disconnect', handleConnectionDisconnect);
+
+    // Putuskan koneksi voice aktif supaya socket ditutup rapi saat shutdown
+    // (client.destroy() hanya membersihkan gateway, bukan voice connection).
+    const connection = activeConnection;
+    activeConnection = null;
+    if (connection) {
+      if (typeof connection.off === 'function') {
+        connection.off('disconnect', handleConnectionDisconnect);
+      }
+      if (client.voice && client.voice.connection === connection) {
+        client.voice.connection = null;
+      }
+      if (typeof connection.disconnect === 'function') {
+        try {
+          connection.disconnect();
+          if (prefix) console.log(`${prefix} Koneksi voice diputus saat shutdown.`);
+          else console.log('[INFO] Koneksi voice diputus saat shutdown.');
+        } catch {
+          // Diabaikan: proses sedang berhenti.
+        }
+      }
     }
   };
 

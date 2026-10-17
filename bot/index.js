@@ -69,21 +69,29 @@ function startBot(accounts) {
 
   // Satu HTTP health check untuk seluruh process (bukan per account).
   // Default bind ke 127.0.0.1 (localhost) supaya tidak terekspos publik tanpa
-  // autentikasi; set HOST=0.0.0.0 hanya kalau memang perlu (mis. lewat proxy).
+  // autentikasi; set HOST=0.0.0.0 hanya kalau memang perlu (mis. lewat proxy)
+  // dan pasang HEALTH_TOKEN untuk proteksi.
   const port = process.env.PORT || 3000;
   const host = process.env.HOST || '127.0.0.1';
-  const server = createHealthServer(registry);
+  const healthToken = process.env.HEALTH_TOKEN;
+  const server = createHealthServer(registry, { token: healthToken });
+
   server.listen(port, host, () => {
     console.log(`[INFO] Health check server listening on http://${host}:${port}/health`);
-    if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
+    const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(host);
+    const hasToken = Boolean(healthToken && healthToken.trim());
+    if (!isLoopback && !hasToken) {
       console.warn(
-        '[WARN] Health check di-bind ke non-loopback tanpa autentikasi. Pastikan port tidak terekspos publik.',
+        '[WARN] Health check di-bind ke non-loopback TANPA HEALTH_TOKEN. Set HEALTH_TOKEN atau jangan ekspos port ini ke publik.',
       );
+    } else if (!isLoopback) {
+      console.log('[INFO] Health check dilindungi HEALTH_TOKEN (header: Authorization: Bearer <token>).');
     }
   });
 
-  // Graceful shutdown: bersihkan voice handler + client supaya tidak ada
-  // timer/socket menggantung saat proses dihentikan (pm2 stop/restart).
+  // Graceful shutdown: bersihkan voice handler (termasuk disconnect voice) +
+  // client supaya tidak ada timer/socket menggantung saat proses dihentikan
+  // (pm2 stop/restart).
   let shuttingDown = false;
   function shutdown(signal) {
     if (shuttingDown) return;

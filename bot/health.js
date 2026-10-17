@@ -4,7 +4,7 @@ const http = require('node:http');
 const { STATUS } = require('./account-manager.js');
 
 // Status akun yang dianggap ready untuk readiness check.
-// starting/logging_in/voice_connecting BELUM ready; error tentu tidak.
+// starting/logging_in/voice_connecting/reconnecting BELUM ready; error tentu tidak.
 const READY_STATUSES = new Set([STATUS.READY, STATUS.VOICE_CONNECTED]);
 
 /**
@@ -23,22 +23,55 @@ function summarizeRegistry(registry) {
 }
 
 /**
+ * Menentukan token health dari options/env. Kosong -> null (tanpa autentikasi).
+ * @param {object} [options]
+ * @param {string} [options.token] Override token (dipakai juga oleh test)
+ * @returns {?string}
+ */
+function resolveHealthToken(options = {}) {
+  for (const candidate of [options.token, process.env.HEALTH_TOKEN]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
+function isAuthorized(req, token) {
+  const header = req.headers.authorization;
+  if (typeof header !== 'string') return false;
+  const [scheme, value] = header.split(' ');
+  return typeof value === 'string' && scheme.toLowerCase() === 'bearer' && value === token;
+}
+
+/**
  * HTTP health server:
  * - GET /health      : readiness -> 200 kalau minimal 1 akun ready, 503 kalau tidak
  * - GET /health/live : liveness  -> selalu 200 selama process hidup
  * - route lain       : 404
  *
+ * Kalau HEALTH_TOKEN diisi (atau options.token diberikan), semua request wajib
+ * menyertakan header `Authorization: Bearer <token>` (401 kalau tidak).
+ *
  * Bind default 127.0.0.1 (lihat bot/index.js) supaya tidak terekspos publik
  * tanpa autentikasi.
  * @param {Map} registry Registry hasil startAll()
+ * @param {object} [options]
+ * @param {string} [options.token] Token health (fallback ke env HEALTH_TOKEN)
  */
-function createHealthServer(registry) {
+function createHealthServer(registry, options = {}) {
+  const token = resolveHealthToken(options);
+
   return http.createServer((req, res) => {
     let pathname = '/';
     try {
       pathname = new URL(req.url, 'http://localhost').pathname;
     } catch {
       // URL tidak valid -> route tidak dikenal (404).
+    }
+
+    if (token && !isAuthorized(req, token)) {
+      res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
+      res.end(`${JSON.stringify({ error: 'unauthorized' })}\n`);
+      return;
     }
 
     if (pathname === '/health/live') {
@@ -63,5 +96,6 @@ function createHealthServer(registry) {
 module.exports = {
   READY_STATUSES,
   summarizeRegistry,
+  resolveHealthToken,
   createHealthServer,
 };

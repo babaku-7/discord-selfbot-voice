@@ -360,6 +360,13 @@ secara default (set `HOST=0.0.0.0` hanya kalau perlu diakses dari luar):
   (tanpa credential).
 * `GET /health/live` — liveness: selalu `200` selama proses hidup.
 * Route lain dibalas `404`.
+* Kalau `HEALTH_TOKEN` diisi, semua request harus menyertakan header
+  `Authorization: Bearer <token>` (`401` kalau tidak) — disarankan saat
+  `HOST` bukan loopback.
+* Status akun mengikuti kondisi nyata: gateway putus sementara →
+  `reconnecting` (kembali `ready` kalau pulih; turun ke `error` kalau tidak
+  pulih dalam 60 detik), gateway mati permanen atau sesi invalid → `error`
+  langsung.
 
 ## License
 

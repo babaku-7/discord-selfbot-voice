@@ -20,8 +20,14 @@ const STATUS = {
   READY: 'ready',
   VOICE_CONNECTING: 'voice_connecting',
   VOICE_CONNECTED: 'voice_connected',
+  RECONNECTING: 'reconnecting',
   ERROR: 'error',
 };
+
+// Status yang dianggap "sehat" untuk mulai menghitung grace period reconnect.
+const HEALTHY_STATUSES = new Set([STATUS.READY, STATUS.VOICE_CONNECTED, STATUS.VOICE_CONNECTING]);
+
+const DEFAULT_RECONNECT_GRACE_MS = 60000;
 
 /**
  * Urutan pencarian accounts.json (prioritas tertinggi dulu):
@@ -153,12 +159,30 @@ function setStatus(registry, name, status) {
 /**
  * Menjalankan satu account dengan lifecycle dan error isolation sendiri.
  * Kegagalan akun ini tidak memengaruhi akun lain.
+ * @param {object} account Account tervalidasi
+ * @param {Map} registry Registry status per akun
+ * @param {object} [deps] Dependency injection untuk testing
+ * @param {Function} [deps.Client] Class client pengganti
+ * @param {number} [deps.reconnectGraceMs] Grace period reconnect gateway (default 60000)
  */
 function startAccount(account, registry, deps = {}) {
   const ClientClass = deps.Client || Client;
+  const reconnectGraceMs =
+    Number.isFinite(deps.reconnectGraceMs) && deps.reconnectGraceMs > 0
+      ? deps.reconnectGraceMs
+      : DEFAULT_RECONNECT_GRACE_MS;
   const { name } = account;
 
-  registry.set(name, { account, client: null, status: STATUS.STARTING, voiceHandler: null });
+  registry.set(name, {
+    account,
+    client: null,
+    status: STATUS.STARTING,
+    voiceHandler: null,
+    lastError: null,
+    lastReadyAt: null,
+    reconnectGraceTimer: null,
+    destroyed: false,
+  });
 
   let client;
   try {
@@ -170,7 +194,73 @@ function startAccount(account, registry, deps = {}) {
   }
   registry.get(name).client = client;
 
+  const clearReconnectGrace = () => {
+    const entry = registry.get(name);
+    if (entry && entry.reconnectGraceTimer) {
+      clearTimeout(entry.reconnectGraceTimer);
+      entry.reconnectGraceTimer = null;
+    }
+  };
+
+  // Gateway putus sementara: jangan langsung turunkan status (reconnect normal
+  // butuh beberapa detik). Mulai grace period; kalau tidak pulih, baru error.
+  const beginReconnectGrace = () => {
+    const entry = registry.get(name);
+    if (!entry || entry.destroyed) return;
+    // Hanya mulai dari status sehat; fase startup/login tidak diganggu.
+    if (!HEALTHY_STATUSES.has(entry.status)) return;
+    if (entry.reconnectGraceTimer) return;
+
+    console.warn(
+      `[ACCOUNT: ${name}] Gateway terputus, menunggu reconnect (maksimal ${Math.round(
+        reconnectGraceMs / 1000,
+      )} detik)...`,
+    );
+    setStatus(registry, name, STATUS.RECONNECTING);
+
+    entry.reconnectGraceTimer = setTimeout(() => {
+      const current = registry.get(name);
+      if (!current || current.destroyed) return;
+      current.reconnectGraceTimer = null;
+      if (current.status === STATUS.RECONNECTING) {
+        setStatus(registry, name, STATUS.ERROR);
+        console.error(
+          `[ACCOUNT: ${name}] Tidak pulih setelah ${Math.round(
+            reconnectGraceMs / 1000,
+          )} detik, status diturunkan ke error.`,
+        );
+      }
+    }, reconnectGraceMs);
+    entry.reconnectGraceTimer.unref?.();
+  };
+
+  const markGatewayRecovered = () => {
+    const entry = registry.get(name);
+    if (!entry || entry.destroyed) return;
+    clearReconnectGrace();
+    // Pulih dari reconnecting, atau pulih setelah grace sempat habis (error).
+    const recoveredFromReconnecting = entry.status === STATUS.RECONNECTING;
+    const recoveredAfterTimeout = entry.status === STATUS.ERROR && entry.lastReadyAt;
+    if (recoveredFromReconnecting || recoveredAfterTimeout) {
+      setStatus(registry, name, STATUS.READY);
+      console.log(`[ACCOUNT: ${name}] Gateway pulih, status kembali ready.`);
+    }
+  };
+
+  const markGatewayFatal = (reason) => {
+    const entry = registry.get(name);
+    if (!entry || entry.destroyed) return;
+    clearReconnectGrace();
+    setStatus(registry, name, STATUS.ERROR);
+    console.error(`[ACCOUNT: ${name}] ${reason}`);
+  };
+
   client.once('ready', () => {
+    const entry = registry.get(name);
+    if (entry) {
+      entry.lastReadyAt = Date.now();
+      clearReconnectGrace();
+    }
     setStatus(registry, name, STATUS.READY);
     console.log(`[ACCOUNT: ${name}] Ready as ${client.user.tag}`);
 
@@ -184,7 +274,14 @@ function startAccount(account, registry, deps = {}) {
     const voiceOptions = {
       accountName: name,
       allowEnvFallback: account.allowEnvFallback === true,
-      onVoiceConnected: () => setStatus(registry, name, STATUS.VOICE_CONNECTED),
+      onVoiceConnected: () => {
+        const current = registry.get(name);
+        // Jangan timpa status reconnecting/error dengan voice_connected;
+        // health harus mencerminkan kondisi gateway juga.
+        if (current && (current.status === STATUS.VOICE_CONNECTING || current.status === STATUS.READY)) {
+          setStatus(registry, name, STATUS.VOICE_CONNECTED);
+        }
+      },
     };
 
     try {
@@ -202,11 +299,43 @@ function startAccount(account, registry, deps = {}) {
     }
   });
 
-  // Error runtime per akun: dicatat saja, tidak mematikan akun lain.
-  // Reconnect gateway tetap ditangani oleh library (WebSocketManager).
+  // Error runtime per akun: dicatat saja (lastError), tidak mematikan akun lain
+  // dan tidak langsung menurunkan status — sinyal penurunan status datang dari
+  // event lifecycle gateway di bawah ini.
   client.on('error', (error) => {
-    console.error(`[ACCOUNT: ${name}] Client error: ${error && error.message ? error.message : error}`);
+    const message = error && error.message ? error.message : String(error);
+    const entry = registry.get(name);
+    if (entry) entry.lastError = { message, at: Date.now() };
+    console.error(`[ACCOUNT: ${name}] Client error: ${message}`);
   });
+
+  // Gateway disconnect permanen (close code unrecoverable): library tidak akan
+  // reconnect sendiri -> status harus turun supaya /health tidak stale.
+  client.on('shardDisconnect', () => {
+    if (client.ws?.destroyed) return;
+    markGatewayFatal('Gateway disconnect permanen (tidak akan reconnect otomatis), status error.');
+  });
+
+  // Sesi invalid (mis. token dicabut): library berhenti reconnect dan menyerahkan
+  // penanganan ke aplikasi; kita tandai error dan hentikan client.
+  client.on('invalidated', () => {
+    if (client.ws?.destroyed) return;
+    markGatewayFatal('Sesi Discord invalid (kemungkinan token dicabut), client dihentikan.');
+    try {
+      client.destroy();
+    } catch (error) {
+      console.error(`[ACCOUNT: ${name}] Gagal destroy client setelah invalidated: ${error.message}`);
+    }
+  });
+
+  // Gateway putus sementara -> tunggu reconnect dengan batas waktu.
+  client.on('shardReconnecting', () => {
+    if (client.ws?.destroyed) return;
+    beginReconnectGrace();
+  });
+
+  client.on('shardResume', () => markGatewayRecovered());
+  client.on('shardReady', () => markGatewayRecovered());
 
   setStatus(registry, name, STATUS.LOGGING_IN);
   console.log(`[ACCOUNT: ${name}] Logging in...`);
@@ -249,12 +378,18 @@ function startAll(accounts, deps = {}) {
 }
 
 /**
- * Menghentikan semua akun dengan bersih: cleanup voice handler (timer + listener)
- * lalu destroy client. Dipakai saat shutdown (SIGINT/SIGTERM).
+ * Menghentikan semua akun dengan bersih: cleanup timer/voice handler (termasuk
+ * memutus koneksi voice aktif) lalu destroy client. Dipakai saat shutdown
+ * (SIGINT/SIGTERM).
  * @param {Map} registry Registry hasil startAll()
  */
 function stopAll(registry) {
   for (const [name, entry] of registry.entries()) {
+    entry.destroyed = true;
+    if (entry.reconnectGraceTimer) {
+      clearTimeout(entry.reconnectGraceTimer);
+      entry.reconnectGraceTimer = null;
+    }
     try {
       if (entry.voiceHandler && typeof entry.voiceHandler.stop === 'function') {
         entry.voiceHandler.stop();
