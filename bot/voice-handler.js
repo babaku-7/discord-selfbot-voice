@@ -68,6 +68,11 @@ async function joinVoiceChannel(client, voiceChannelId, options = {}) {
 /**
  * Menyiapkan voice channel untuk satu client, termasuk auto-rejoin
  * saat koneksi terputus. Rejoin hanya berlaku untuk akun tersebut.
+ * @param {object} [options]
+ * @param {string} [options.accountName] Nama akun untuk prefix log
+ * @param {Function} [options.onVoiceConnected] Dipanggil setelah berhasil bergabung
+ * @param {number} [options.reconnectDelay] Jeda rejoin dalam ms (default 5000)
+ * @param {number} [options.watchdogInterval] Interval watchdog dalam ms (default 60000)
  */
 function setupVoiceChannel(client, voiceChannelId, options = {}) {
   // Kompatibilitas: setupVoiceChannel(client) memakai VOICE_CHANNEL_ID dari env.
@@ -109,6 +114,23 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
     if (joining || isConnectedToTarget()) return;
 
     joining = true;
+
+    // Putuskan koneksi voice basi sebelum rejoin. Library memakai ulang objek
+    // VoiceConnection yang sama, sehingga websocket/UDP socket dan listener
+    // 'closing' dari percobaan yang gagal menumpuk dan memori terus tumbuh
+    // (penyebab proses kena OOM). disconnect() menutup semuanya dengan bersih.
+    const stale = client.voice ? client.voice.connection : null;
+    if (stale && !(stale.channel && stale.channel.id === targetChannelId && stale.status !== 4)) {
+      if (stale.status !== 4) {
+        try {
+          stale.disconnect();
+        } catch {
+          // Diabaikan: koneksi basi, referensinya tetap dibuang di bawah.
+        }
+      }
+      if (client.voice.connection === stale) client.voice.connection = null;
+    }
+
     const connection = await joinVoiceChannel(client, voiceChannelId, options);
     joining = false;
 
@@ -126,7 +148,9 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
 
   // Initial join tidak menunggu event voiceStateUpdate supaya tidak race dengan
   // state update yang dikirim Discord saat proses autentikasi voice.
-  attemptJoin();
+  // Retry diaktifkan: kegagalan join pertama (mis. timeout) tidak boleh
+  // meninggalkan bot "online tapi tidak berada di voice" tanpa percobaan ulang.
+  attemptJoin(true);
 
   client.on('voiceStateUpdate', (oldState, newState) => {
     if (oldState.member?.id !== client.user?.id) return;
@@ -144,6 +168,15 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
   client.on('ready', () => {
     if (!isConnectedToTarget()) scheduleReconnect('Gateway tersambung kembali.');
   });
+
+  // Watchdog: jaring pengaman terakhir. Kalau tidak ada event apa pun yang
+  // terpicu (koneksi mati diam-diam), paksa rejoin secara berkala.
+  const watchdog = setInterval(() => {
+    if (!joining && !isConnectedToTarget()) {
+      scheduleReconnect('Watchdog: tidak terhubung ke voice channel.');
+    }
+  }, options.watchdogInterval ?? 60000);
+  watchdog.unref?.();
 }
 
 module.exports = {
