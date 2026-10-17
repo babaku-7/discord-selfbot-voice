@@ -24,7 +24,7 @@ jobs:
           cache: npm
 
       - name: Verify package is app-only (not publishable)
-        run: node -e "const pkg=require('./package.json'); if (pkg.private !== true) { console.error('package.json harus private: true (repo ini aplikasi, bukan package npm)'); process.exit(1); }"
+        run: node -e "const pkg=require('./package.json'); if (pkg.private !== true) { console.error('package.json harus private=true (repo ini aplikasi, bukan package npm)'); process.exit(1); }"
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
