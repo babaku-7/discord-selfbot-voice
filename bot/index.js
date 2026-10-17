@@ -19,13 +19,15 @@ function validateLegacyEnvVars() {
 
   if (missingVars.length > 0) {
     console.error(`Environment variable belum diatur: ${missingVars.join(', ')}`);
-    process.exit(1);
+    return false;
   }
+  return true;
 }
 
 /**
  * Jika accounts.json tersedia (lokal, root service, atau /etc/secrets) -> MULTI ACCOUNT MODE.
  * Jika tidak ada -> LEGACY SINGLE ACCOUNT MODE (.env).
+ * @returns {?{ mode: string, accounts: Array }} null jika fatal (pesan sudah dicatat)
  */
 function resolveAccounts() {
   let raw;
@@ -33,11 +35,11 @@ function resolveAccounts() {
     raw = loadAccountsFile();
   } catch (error) {
     console.error(`[ERROR] ${error.message}`);
-    process.exit(1);
+    return null;
   }
 
   if (raw === null) {
-    validateLegacyEnvVars();
+    if (!validateLegacyEnvVars()) return null;
     console.log('[INFO] accounts.json tidak ditemukan, memakai mode single-account (.env).');
     return { mode: 'single', accounts: [accountFromEnv()] };
   }
@@ -56,41 +58,55 @@ function resolveAccounts() {
 
   if (accounts.length === 0) {
     console.error('[ERROR] Tidak ada account valid di accounts.json, process dihentikan.');
-    process.exit(1);
+    return null;
   }
 
   return { mode: 'multi', accounts };
 }
 
-const { accounts } = resolveAccounts();
-const registry = startAll(accounts);
+function startBot(accounts) {
+  const registry = startAll(accounts);
 
-// Satu HTTP health check untuk seluruh process (bukan per account).
-// Default bind ke 127.0.0.1 (localhost) supaya tidak terekspos publik tanpa
-// autentikasi; set HOST=0.0.0.0 hanya kalau memang perlu (mis. lewat proxy).
-const port = process.env.PORT || 3000;
-const host = process.env.HOST || '127.0.0.1';
-const server = createHealthServer(registry);
-server.listen(port, host, () => {
-  console.log(`[INFO] Health check server listening on http://${host}:${port}/health`);
-  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
-    console.warn(
-      '[WARN] Health check di-bind ke non-loopback tanpa autentikasi. Pastikan port tidak terekspos publik.',
-    );
+  // Satu HTTP health check untuk seluruh process (bukan per account).
+  // Default bind ke 127.0.0.1 (localhost) supaya tidak terekspos publik tanpa
+  // autentikasi; set HOST=0.0.0.0 hanya kalau memang perlu (mis. lewat proxy).
+  const port = process.env.PORT || 3000;
+  const host = process.env.HOST || '127.0.0.1';
+  const server = createHealthServer(registry);
+  server.listen(port, host, () => {
+    console.log(`[INFO] Health check server listening on http://${host}:${port}/health`);
+    if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
+      console.warn(
+        '[WARN] Health check di-bind ke non-loopback tanpa autentikasi. Pastikan port tidak terekspos publik.',
+      );
+    }
+  });
+
+  // Graceful shutdown: bersihkan voice handler + client supaya tidak ada
+  // timer/socket menggantung saat proses dihentikan (pm2 stop/restart).
+  let shuttingDown = false;
+  function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[INFO] Menerima ${signal}, menghentikan bot...`);
+    server.close();
+    stopAll(registry);
+    // Jangan panggil process.exit() langsung: itu bisa memotong output log yang
+    // belum ter-flush dan memutus socket secara kasar. Biarkan event loop
+    // selesai natural; failsafe 2 detik kalau masih ada handle menggantung.
+    setTimeout(() => process.exit(0), 2000).unref();
   }
-});
 
-// Graceful shutdown: bersihkan voice handler + client supaya tidak ada
-// timer/socket menggantung saat proses dihentikan (pm2 stop/restart).
-let shuttingDown = false;
-function shutdown(signal) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log(`[INFO] Menerima ${signal}, menghentikan bot...`);
-  server.close();
-  stopAll(registry);
-  process.exit(0);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+const resolved = resolveAccounts();
+if (resolved) {
+  startBot(resolved.accounts);
+} else {
+  // Fatal saat resolve: pesan sudah dicatat. Biarkan event loop kosong supaya
+  // proses keluar natural dengan exit code 1 dan log ikut ter-flush
+  // (process.exit() langsung bisa memotong tulisan ke pipe pm2).
+  process.exitCode = 1;
+}
