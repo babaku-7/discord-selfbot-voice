@@ -351,7 +351,9 @@ Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
    - Untuk multi-account, gunakan Secret File `accounts.json` atau sediakan
      file `bot/accounts.json` (lihat section Multi Account).
 
-Health check tersedia melalui port yang diberikan oleh environment `PORT`.
+Health check tersedia melalui port `PORT` (default `3000`), dan secara
+default hanya listen di `127.0.0.1`. Set `HOST=0.0.0.0` kalau port-nya
+perlu diakses dari luar (mis. uptime monitoring).
 
 ## License
 

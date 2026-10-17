@@ -65,11 +65,13 @@ const { accounts } = resolveAccounts();
 const registry = startAll(accounts);
 
 // Satu HTTP health check untuk seluruh process (bukan per account).
+// Default bind ke 127.0.0.1 (localhost); set HOST=0.0.0.0 kalau perlu diakses dari luar.
 const port = process.env.PORT || 3000;
+const host = process.env.HOST || '127.0.0.1';
 http
   .createServer((req, res) => {
     const running = [...registry.values()].filter((entry) => entry.status !== 'error').length;
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end(`Multi-account voice client is alive\nAccounts running: ${running}/${registry.size}\n`);
   })
-  .listen(port, () => console.log(`[INFO] Health check server listening on port ${port}`));
+  .listen(port, host, () => console.log(`[INFO] Health check server listening on ${host}:${port}`));

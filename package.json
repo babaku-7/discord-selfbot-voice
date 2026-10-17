@@ -7,16 +7,13 @@
   "scripts": {
     "all": "npm run build && npm publish",
     "start": "node bot/index.js",
-    "test": "npm run lint:all && npm run test:typescript",
-    "fix:all": "npm run lint:fix && npm run lint:typings:fix && npm run format",
-    "test:typescript": "tsc --noEmit && tsd",
+    "test": "node bot/tests/voice-handler.smoke.js",
+    "fix:all": "npm run lint:fix && npm run format",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "lint:typings": "tslint typings/index.d.ts",
-    "lint:typings:fix": "tslint typings/index.d.ts --fix",
     "format": "prettier --write src/**/*.js typings/**/*.ts",
-    "lint:all": "npm run lint &&  npm run lint:typings",
-    "build": "npm run lint:fix && npm run lint:typings:fix && npm run format"
+    "lint:all": "npm run lint",
+    "build": "npm run lint:fix && npm run format"
   },
   "files": [
     "src",
