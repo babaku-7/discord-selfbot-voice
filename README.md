@@ -16,7 +16,7 @@ Self-bot Discord sederhana yang hanya login dan tetap terhubung ke voice
 ## Setup Lokal
 
 ```bash
-npm install
+npm ci
 export DISCORD_TOKEN=YOUR_DISCORD_TOKEN
 export VOICE_CHANNEL_ID=YOUR_VOICE_CHANNEL_ID
 npm start
@@ -342,7 +342,7 @@ Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
 ## Deploy ke Render
 
 1. Hubungkan repository ke Render sebagai Web Service.
-2. Gunakan **Build Command** `npm install`.
+2. Gunakan **Build Command** `npm ci`.
 3. Gunakan **Start Command** `npm start`.
 4. Tambahkan environment variables berikut:
    - `DISCORD_TOKEN`: token akun Discord.
