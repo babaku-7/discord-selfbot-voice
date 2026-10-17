@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const process = require('node:process');
-const { setupVoiceChannel } = require('./voice-handler.js');
+const { setupVoiceChannel, resolveVoiceChannelId } = require('./voice-handler.js');
 const { setupRichPresence, getRpcConfig } = require('./rpc.js');
 const { Client } = require('../src/index.js');
 
@@ -86,6 +86,10 @@ function loadAccountsFile(accountsPath) {
 
 /**
  * Validasi satu account. Token TIDAK pernah ditulis ke log.
+ *
+ * Catatan fallback voice channel: di mode multi-account, voiceChannelId kosong
+ * berarti voice dilewati untuk akun tersebut (allowEnvFallback: false) dan
+ * TIDAK fallback ke env VOICE_CHANNEL_ID global.
  * @returns {{ skipped: boolean, account?: object, reason?: string }}
  */
 function validateAccount(rawAccount, index, usedNames) {
@@ -123,17 +127,19 @@ function validateAccount(rawAccount, index, usedNames) {
     rpc = null;
   }
 
-  return { skipped: false, account: { name, token, voiceChannelId, rpc } };
+  return { skipped: false, account: { name, token, voiceChannelId, allowEnvFallback: false, rpc } };
 }
 
 /**
  * Membangun satu account dari environment variable (mode legacy single-account).
+ * Di mode ini fallback ke env VOICE_CHANNEL_ID tetap diizinkan.
  */
 function accountFromEnv() {
   return {
     name: 'default',
     token: (process.env.DISCORD_TOKEN || '').trim(),
     voiceChannelId: (process.env.VOICE_CHANNEL_ID || '').trim() || null,
+    allowEnvFallback: true,
     // Bentuk internal getRpcConfig() kompatibel dengan normalizeRpcConfig().
     rpc: getRpcConfig(),
   };
@@ -152,7 +158,7 @@ function startAccount(account, registry, deps = {}) {
   const ClientClass = deps.Client || Client;
   const { name } = account;
 
-  registry.set(name, { account, client: null, status: STATUS.STARTING });
+  registry.set(name, { account, client: null, status: STATUS.STARTING, voiceHandler: null });
 
   let client;
   try {
@@ -175,13 +181,22 @@ function startAccount(account, registry, deps = {}) {
       console.error(`[ACCOUNT: ${name}] Failed to setup Rich Presence: ${error.message}`);
     }
 
+    const voiceOptions = {
+      accountName: name,
+      allowEnvFallback: account.allowEnvFallback === true,
+      onVoiceConnected: () => setStatus(registry, name, STATUS.VOICE_CONNECTED),
+    };
+
     try {
-      setStatus(registry, name, STATUS.VOICE_CONNECTING);
-      console.log(`[ACCOUNT: ${name}] Joining voice channel...`);
-      setupVoiceChannel(client, account.voiceChannelId, {
-        accountName: name,
-        onVoiceConnected: () => setStatus(registry, name, STATUS.VOICE_CONNECTED),
-      });
+      const voiceTarget = resolveVoiceChannelId(account.voiceChannelId, voiceOptions);
+      if (!voiceTarget) {
+        // Akun multi-account tanpa voiceChannelId: voice dilewati secara sengaja.
+        console.log(`[ACCOUNT: ${name}] Voice dilewati: voiceChannelId kosong.`);
+      } else {
+        setStatus(registry, name, STATUS.VOICE_CONNECTING);
+        console.log(`[ACCOUNT: ${name}] Joining voice channel...`);
+        registry.get(name).voiceHandler = setupVoiceChannel(client, account.voiceChannelId, voiceOptions);
+      }
     } catch (error) {
       console.error(`[ACCOUNT: ${name}] Voice setup gagal: ${error.message}`);
     }
@@ -233,6 +248,30 @@ function startAll(accounts, deps = {}) {
   return registry;
 }
 
+/**
+ * Menghentikan semua akun dengan bersih: cleanup voice handler (timer + listener)
+ * lalu destroy client. Dipakai saat shutdown (SIGINT/SIGTERM).
+ * @param {Map} registry Registry hasil startAll()
+ */
+function stopAll(registry) {
+  for (const [name, entry] of registry.entries()) {
+    try {
+      if (entry.voiceHandler && typeof entry.voiceHandler.stop === 'function') {
+        entry.voiceHandler.stop();
+      }
+    } catch (error) {
+      console.error(`[ACCOUNT: ${name}] Gagal stop voice handler: ${error.message}`);
+    }
+    try {
+      if (entry.client && typeof entry.client.destroy === 'function') {
+        entry.client.destroy();
+      }
+    } catch (error) {
+      console.error(`[ACCOUNT: ${name}] Gagal destroy client: ${error.message}`);
+    }
+  }
+}
+
 module.exports = {
   STATUS,
   ACCOUNTS_PATH,
@@ -246,4 +285,5 @@ module.exports = {
   accountFromEnv,
   startAccount,
   startAll,
+  stopAll,
 };

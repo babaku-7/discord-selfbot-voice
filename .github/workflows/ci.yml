@@ -26,8 +26,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Lint (bot code)
         run: npm run lint
 
-      - name: Smoke test voice-handler
+      - name: Smoke tests (voice-handler, account-manager, health, security)
         run: npm test

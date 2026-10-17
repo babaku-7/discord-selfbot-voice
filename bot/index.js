@@ -2,7 +2,6 @@
 
 require('dotenv').config();
 
-const http = require('http');
 const process = require('node:process');
 const {
   loadAccountsFile,
@@ -10,7 +9,9 @@ const {
   validateAccount,
   accountFromEnv,
   startAll,
+  stopAll,
 } = require('./account-manager.js');
+const { createHealthServer } = require('./health.js');
 
 function validateLegacyEnvVars() {
   const requiredEnvVars = ['DISCORD_TOKEN', 'VOICE_CHANNEL_ID'];
@@ -65,13 +66,31 @@ const { accounts } = resolveAccounts();
 const registry = startAll(accounts);
 
 // Satu HTTP health check untuk seluruh process (bukan per account).
-// Default bind ke 127.0.0.1 (localhost); set HOST=0.0.0.0 kalau perlu diakses dari luar.
+// Default bind ke 127.0.0.1 (localhost) supaya tidak terekspos publik tanpa
+// autentikasi; set HOST=0.0.0.0 hanya kalau memang perlu (mis. lewat proxy).
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || '127.0.0.1';
-http
-  .createServer((req, res) => {
-    const running = [...registry.values()].filter((entry) => entry.status !== 'error').length;
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`Multi-account voice client is alive\nAccounts running: ${running}/${registry.size}\n`);
-  })
-  .listen(port, host, () => console.log(`[INFO] Health check server listening on ${host}:${port}`));
+const server = createHealthServer(registry);
+server.listen(port, host, () => {
+  console.log(`[INFO] Health check server listening on http://${host}:${port}/health`);
+  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
+    console.warn(
+      '[WARN] Health check di-bind ke non-loopback tanpa autentikasi. Pastikan port tidak terekspos publik.',
+    );
+  }
+});
+
+// Graceful shutdown: bersihkan voice handler + client supaya tidak ada
+// timer/socket menggantung saat proses dihentikan (pm2 stop/restart).
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[INFO] Menerima ${signal}, menghentikan bot...`);
+  server.close();
+  stopAll(registry);
+  process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -269,13 +269,7 @@ class Client extends BaseClient {
       and doing so might potentially get your account banned.
       Use this at your own risk.`,
     );
-    this.emit(
-      Events.DEBUG,
-      `Provided token: ${token
-        .split('.')
-        .map((val, i) => (i > 1 ? val.replace(/./g, '*') : val))
-        .join('.')}`,
-    );
+    this.emit(Events.DEBUG, 'Provided token: [REDACTED]');
 
     if (this.options.presence) {
       this.options.ws.presence = this.presence._parse(this.options.presence);

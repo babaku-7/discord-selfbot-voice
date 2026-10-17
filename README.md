@@ -258,8 +258,9 @@ mode** (konfigurasi `.env` lama: `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`,
 * `name` — nama akun untuk prefix log (`[ACCOUNT: akun1]`). Wajib unik.
 * `token` — token akun Discord. Wajib; akun dengan token kosong dilewati.
 * `voiceChannelId` — voice channel akun tersebut. Boleh kosong (voice
-  dilewati untuk akun itu). Setiap akun dapat memakai channel berbeda, dan
-  dua akun boleh memakai channel yang sama.
+  dilewati untuk akun itu; TIDAK fallback ke `VOICE_CHANNEL_ID` di `.env`).
+  Setiap akun dapat memakai channel berbeda, dan dua akun boleh memakai
+  channel yang sama.
 * `rpc` — konfigurasi Rich Presence akun tersebut (opsional). Field-nya sama
   seperti variable `RPC_*` pada section Custom Rich Presence. Setiap akun
   memiliki RPC dan timestamp sendiri yang tidak tertukar.
@@ -351,9 +352,14 @@ Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
    - Untuk multi-account, gunakan Secret File `accounts.json` atau sediakan
      file `bot/accounts.json` (lihat section Multi Account).
 
-Health check tersedia melalui port `PORT` (default `3000`), dan secara
-default hanya listen di `127.0.0.1`. Set `HOST=0.0.0.0` kalau port-nya
-perlu diakses dari luar (mis. uptime monitoring).
+Health check tersedia di port `PORT` (default `3000`), listen di `127.0.0.1`
+secara default (set `HOST=0.0.0.0` hanya kalau perlu diakses dari luar):
+
+* `GET /health` — readiness: `200` kalau minimal satu akun sudah login
+  (ready), `503` kalau tidak ada. Body JSON berisi status per akun
+  (tanpa credential).
+* `GET /health/live` — liveness: selalu `200` selama proses hidup.
+* Route lain dibalas `404`.
 
 ## License
 
