@@ -71,7 +71,8 @@ async function joinVoiceChannel(client, voiceChannelId, options = {}) {
  * @param {object} [options]
  * @param {string} [options.accountName] Nama akun untuk prefix log
  * @param {Function} [options.onVoiceConnected] Dipanggil setelah berhasil bergabung
- * @param {number} [options.reconnectDelay] Jeda rejoin dalam ms (default 5000)
+ * @param {number} [options.reconnectDelay] Jeda awal rejoin dalam ms (default 5000, naik eksponensial saat gagal berulang)
+ * @param {number} [options.maxReconnectDelay] Batas maksimum jeda rejoin dalam ms (default 300000)
  * @param {number} [options.watchdogInterval] Interval watchdog dalam ms (default 60000)
  */
 function setupVoiceChannel(client, voiceChannelId, options = {}) {
@@ -87,7 +88,9 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
     return;
   }
 
-  const delay = options.reconnectDelay ?? 5000;
+  const baseDelay = options.reconnectDelay ?? 5000;
+  const maxDelay = options.maxReconnectDelay ?? 300000;
+  let currentDelay = baseDelay;
   let reconnectTimer = null;
   let joining = false;
   let activeConnection = null;
@@ -100,14 +103,18 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
   const scheduleReconnect = (reason) => {
     if (reconnectTimer || joining || isConnectedToTarget()) return;
 
-    if (prefix) console.log(`${prefix} ${reason} Mencoba bergabung kembali dalam ${delay / 1000} detik...`);
-    else console.log(`[WARN] ${reason} Mencoba bergabung kembali dalam ${delay / 1000} detik...`);
+    // Backoff eksponensial: kegagalan berulang (mis. voice state update
+    // di-throttle Discord) tidak boleh di-spam terus tiap 5 detik.
+    const seconds = currentDelay / 1000;
+    if (prefix) console.log(`${prefix} ${reason} Mencoba bergabung kembali dalam ${seconds} detik...`);
+    else console.log(`[WARN] ${reason} Mencoba bergabung kembali dalam ${seconds} detik...`);
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       attemptJoin(true);
-    }, delay);
+    }, currentDelay);
     reconnectTimer.unref?.();
+    currentDelay = Math.min(currentDelay * 2, maxDelay);
   };
 
   const attemptJoin = async (retryOnFailure = false) => {
@@ -135,6 +142,7 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
     joining = false;
 
     if (connection) {
+      currentDelay = baseDelay;
       activeConnection = connection;
       connection.once('disconnect', () => {
         if (activeConnection === connection) activeConnection = null;

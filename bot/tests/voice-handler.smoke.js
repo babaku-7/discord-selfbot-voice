@@ -99,6 +99,28 @@ function makeClient() {
     console.log('PASS 3: watchdog memicu rejoin tanpa event');
   }
 
+  // 4. Backoff: kegagalan beruntun makin jarang, bukan spam tiap jeda awal.
+  {
+    const { client, state } = makeClient();
+    client.voice.joinChannel = async () => {
+      state.attempts += 1;
+      throw new Error('Connection not established within 15 seconds');
+    };
+    setupVoiceChannel(client, CHANNEL_ID, {
+      accountName: 'test-backoff',
+      reconnectDelay: 50,
+      maxReconnectDelay: 2000,
+      watchdogInterval: 100000,
+    });
+    await sleep(1000);
+    assert.ok(state.attempts >= 3, `harus ada beberapa percobaan (attempts=${state.attempts})`);
+    assert.ok(
+      state.attempts <= 9,
+      `backoff harus memperlambat retry; tanpa backoff akan ~20 percobaan (attempts=${state.attempts})`,
+    );
+    console.log(`PASS 4: backoff memperlambat retry (attempts=${state.attempts} dalam 1 detik)`);
+  }
+
   console.log('Semua smoke test lulus.');
 })().catch((error) => {
   console.error('SMOKE TEST GAGAL:', error.message);
