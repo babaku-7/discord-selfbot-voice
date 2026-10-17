@@ -326,7 +326,7 @@ class VoiceConnection extends EventEmitter {
    * @private
    */
   setTokenAndEndpoint(token, endpoint) {
-    this.emit('debug', `Token "${token}" and endpoint "${endpoint}"`);
+    this.emit('debug', `Voice endpoint "${endpoint}" updated`);
     if (!endpoint) {
       // Signifies awaiting endpoint stage
       return;
@@ -337,7 +337,11 @@ class VoiceConnection extends EventEmitter {
       return;
     }
 
-    endpoint = endpoint.match(/([^:]*)/)[0];
+    // [PATCH] Pertahankan port endpoint (mis. c-sin07....discord.media:2087).
+    // Endpoint voice modern memakai port non-443; kalau port dibuang, koneksi
+    // WS nyasar ke port default 443 dan ditolak voice server (close 4006
+    // "Session is no longer valid").
+    endpoint = endpoint.replace(/^wss?:\/\//, '').replace(/\/$/, '');
     this.emit('debug', `Endpoint resolved as ${endpoint}`);
 
     if (!endpoint) {
@@ -576,7 +580,7 @@ class VoiceConnection extends EventEmitter {
     this.status = VoiceStatus.CONNECTED;
     const ready = () => {
       clearTimeout(this.connectTimeout);
-      this.emit('debug', `Ready with authentication details: ${JSON.stringify(this.authentication)}`);
+      this.emit('debug', `Ready with authentication details: ${JSON.stringify({ ...this.authentication, token: '[REDACTED]' })}`);
       /**
        * Emitted once the connection is ready, when a promise to join a voice channel resolves,
        * the connection will already be ready.

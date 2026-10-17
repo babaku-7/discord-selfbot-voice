@@ -46,7 +46,7 @@ class ClientVoiceManager {
       'debug',
       `[VOICE] voiceServer ${channel_id ? 'channel' : 'guild'}: ${
         channel_id || guild_id
-      } token: ${token} endpoint: ${endpoint}`,
+      } token: [REDACTED] endpoint: ${endpoint}`,
     );
     const connection = this.connection;
     if (connection) connection.setTokenAndEndpoint(token, endpoint);

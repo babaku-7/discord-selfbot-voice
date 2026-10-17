@@ -1,15 +1,18 @@
 'use strict';
 
 const EventEmitter = require('events');
+const { Buffer } = require('node:buffer');
 const { setTimeout, setInterval } = require('node:timers');
+const DAVE = require('./DAVE');
 const WebSocket = require('../../../WebSocket');
 const { Error } = require('../../../errors');
-const { Opcodes, VoiceOpcodes } = require('../../../util/Constants');
+const { VoiceOpcodes } = require('../../../util/Constants');
 
 /**
  * Represents a Voice Connection's WebSocket.
  * @extends {EventEmitter}
  * @private
+ * Ported from rock-forge/rockcord (DAVE/E2EE support for the 2026 voice protocol).
  */
 class VoiceWebSocket extends EventEmitter {
   constructor(connection) {
@@ -19,6 +22,12 @@ class VoiceWebSocket extends EventEmitter {
      * @type {VoiceConnection}
      */
     this.connection = connection;
+    this.dave = connection.dave = new DAVE(
+      connection.client.user.id,
+      connection.serverId ? (BigInt(connection.serverId) - 1n).toString() : connection.channel.id,
+      packet => this.sendPacket(packet).catch(error => this.onError(error)),
+      (op, payload) => this.send(Buffer.concat([Buffer.from([op]), payload])).catch(error => this.onError(error)),
+    );
 
     /**
      * How many connection attempts have been made
@@ -29,7 +38,9 @@ class VoiceWebSocket extends EventEmitter {
     this._sequenceNumber = -1;
 
     this.dead = false;
-    this.connection.on('closing', this.shutdown.bind(this));
+    this.heartbeatAcked = true;
+    this.closingHandler = this.shutdown.bind(this);
+    this.connection.on('closing', this.closingHandler);
   }
 
   /**
@@ -44,6 +55,8 @@ class VoiceWebSocket extends EventEmitter {
   shutdown() {
     this.emit('debug', `[WS] shutdown requested`);
     this.dead = true;
+    this.dave.destroy();
+    this.connection.removeListener('closing', this.closingHandler);
     this.reset();
   }
 
@@ -52,9 +65,11 @@ class VoiceWebSocket extends EventEmitter {
    */
   reset() {
     this.emit('debug', `[WS] reset requested`);
+    clearTimeout(this.reconnectTimer);
     if (this.ws) {
-      if (this.ws.readyState !== WebSocket.CLOSED) this.ws.close();
+      const ws = this.ws;
       this.ws = null;
+      if (ws.readyState !== WebSocket.CLOSED) ws.close();
     }
     this.clearHeartbeat();
   }
@@ -72,17 +87,33 @@ class VoiceWebSocket extends EventEmitter {
     }
 
     this.attempts++;
+    if (this.attempts > 1) {
+      this.dave.session?.reset();
+      this.dave.negotiated = false;
+      this.dave.blocked = true;
+      this.dave.pending.clear();
+      this.dave.clients = new Set([this.client.user.id]);
+    }
 
     /**
      * The actual WebSocket used to connect to the Voice WebSocket Server.
      * @type {WebSocket}
      */
     this.ws = WebSocket.create(`wss://${this.connection.authentication.endpoint}/`, { v: 8 });
+    const ws = this.ws;
     this.emit('debug', `[WS] connecting, ${this.attempts} attempts, ${this.ws.url}`);
-    this.ws.onopen = this.onOpen.bind(this);
-    this.ws.onmessage = this.onMessage.bind(this);
-    this.ws.onclose = this.onClose.bind(this);
-    this.ws.onerror = this.onError.bind(this);
+    this.ws.onopen = () => {
+      if (this.ws === ws) this.onOpen();
+    };
+    this.ws.on('message', (data, isBinary) => {
+      if (this.ws === ws) this.onMessage({ data, isBinary });
+    });
+    this.ws.onclose = event => {
+      if (this.ws === ws) this.onClose(event);
+    };
+    this.ws.onerror = error => {
+      if (this.ws === ws) this.onError(error);
+    };
   }
 
   /**
@@ -91,9 +122,9 @@ class VoiceWebSocket extends EventEmitter {
    * @returns {Promise<string>}
    */
   send(data) {
-    this.emit('debug', `[WS] >> ${data}`);
+    this.emit('debug', '[WS] >> sending packet');
     return new Promise((resolve, reject) => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WS_NOT_OPEN', data);
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WS_NOT_OPEN', '[REDACTED]');
       this.ws.send(data, null, error => {
         if (error) reject(error);
         else resolve(data);
@@ -116,8 +147,11 @@ class VoiceWebSocket extends EventEmitter {
    */
   onOpen() {
     this.emit('debug', `[WS] opened at gateway ${this.connection.authentication.endpoint}`);
+  }
+
+  identify() {
     this.sendPacket({
-      op: Opcodes.DISPATCH,
+      op: VoiceOpcodes.IDENTIFY,
       d: {
         server_id: this.connection.serverId || this.connection.channel.guild?.id || this.connection.channel.id,
         user_id: this.client.user.id,
@@ -125,6 +159,7 @@ class VoiceWebSocket extends EventEmitter {
         session_id: this.connection.authentication.sessionId,
         streams: [{ type: 'screen', rid: '100', quality: 100 }],
         video: true,
+        max_dave_protocol_version: DAVE.maxVersion,
       },
     }).catch(() => {
       this.emit('error', new Error('VOICE_JOIN_SOCKET_CLOSED'));
@@ -138,9 +173,16 @@ class VoiceWebSocket extends EventEmitter {
    */
   onMessage(event) {
     try {
-      return this.onPacket(WebSocket.unpack(event.data, 'json'));
+      if (event.isBinary ?? typeof event.data !== 'string') {
+        const data = Buffer.isBuffer(event.data) ? event.data : Buffer.from(event.data);
+        if (data.length < 3) throw new RangeError('Truncated voice gateway binary packet');
+        this._sequenceNumber = data.readUInt16BE(0);
+        this.dave.binary(data[2], data.subarray(3));
+        return;
+      }
+      this.onPacket(WebSocket.unpack(event.data, 'json'));
     } catch (error) {
-      return this.onError(error);
+      this.onError(error);
     }
   }
 
@@ -150,7 +192,12 @@ class VoiceWebSocket extends EventEmitter {
    */
   onClose(event) {
     this.emit('debug', `[WS] closed with code ${event.code} and reason: ${event.reason}`);
-    if (!this.dead) setTimeout(this.connect.bind(this), this.attempts * 1000).unref();
+    if (event.code === 4017) {
+      this.shutdown();
+      this.onError(new Error('VOICE_DAVE_UNSUPPORTED'));
+      return;
+    }
+    if (!this.dead) this.reconnectTimer = setTimeout(this.connect.bind(this), this.attempts * 1000).unref();
   }
 
   /**
@@ -167,11 +214,13 @@ class VoiceWebSocket extends EventEmitter {
    * @param {Object} packet The received packet
    */
   onPacket(packet) {
-    this.emit('debug', `[WS] << ${JSON.stringify(packet)}`);
-    if (packet.seq) this._sequenceNumber = packet.seq;
+    this.emit('debug', `[WS] << opcode ${packet.op}`);
+    if (packet.seq !== undefined) this._sequenceNumber = packet.seq;
     switch (packet.op) {
       case VoiceOpcodes.HELLO:
+        this.heartbeatAcked = true;
         this.setHeartbeat(packet.d.heartbeat_interval);
+        this.identify();
         break;
       case VoiceOpcodes.READY:
         /**
@@ -184,6 +233,13 @@ class VoiceWebSocket extends EventEmitter {
         break;
       /* eslint-disable no-case-declarations */
       case VoiceOpcodes.SESSION_DESCRIPTION:
+        try {
+          this.dave.initialize(packet.d.dave_protocol_version ?? 0);
+        } catch (error) {
+          this.shutdown();
+          this.onError(error);
+          return;
+        }
         packet.d.secret_key = new Uint8Array(packet.d.secret_key);
         /**
          * Emitted once the Voice Websocket receives a description of this voice session.
@@ -192,19 +248,41 @@ class VoiceWebSocket extends EventEmitter {
          */
         this.emit('sessionDescription', packet.d);
         break;
+      case VoiceOpcodes.HEARTBEAT_ACK:
+        this.heartbeatAcked = true;
+        break;
       case VoiceOpcodes.CLIENT_CONNECT:
-        this.connection.ssrcMap.set(+packet.d.audio_ssrc, {
-          userId: packet.d.user_id,
-          speaking: 0,
-          hasVideo: Boolean(packet.d.video_ssrc),
-        });
+        for (const id of packet.d.user_ids || [packet.d.user_id].filter(Boolean)) this.dave.clients.add(id);
+        if (packet.d.audio_ssrc) {
+          this.connection.ssrcMap.set(+packet.d.audio_ssrc, {
+            userId: packet.d.user_id,
+            speaking: 0,
+            hasVideo: Boolean(packet.d.video_ssrc),
+          });
+        }
         break;
       case VoiceOpcodes.CLIENT_DISCONNECT:
+        this.dave.clients.delete(packet.d.user_id);
+        for (const [ssrc, info] of this.connection.ssrcMap) {
+          if (info.userId === packet.d.user_id) {
+            this.connection.ssrcMap.delete(ssrc);
+            this.connection.receiver?.packets.forgetSource?.(ssrc);
+          }
+        }
         const streamInfo = this.connection.receiver && this.connection.receiver.packets.streams.get(packet.d.user_id);
         if (streamInfo) {
           this.connection.receiver.packets.streams.delete(packet.d.user_id);
           streamInfo.stream.push(null);
         }
+        break;
+      case VoiceOpcodes.DAVE_PREPARE_TRANSITION:
+        this.dave.prepare(packet.d);
+        break;
+      case VoiceOpcodes.DAVE_EXECUTE_TRANSITION:
+        this.dave.execute(packet.d.transition_id);
+        break;
+      case VoiceOpcodes.DAVE_PREPARE_EPOCH:
+        this.dave.epoch(packet.d);
         break;
       case VoiceOpcodes.SPEAKING:
         /**
@@ -270,6 +348,12 @@ class VoiceWebSocket extends EventEmitter {
    * Sends a heartbeat packet.
    */
   sendHeartbeat() {
+    if (!this.heartbeatAcked) {
+      this.ws?.close(4000);
+      this.clearHeartbeat();
+      return;
+    }
+    this.heartbeatAcked = false;
     this.sendPacket({
       op: VoiceOpcodes.HEARTBEAT,
       d: {
