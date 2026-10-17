@@ -5,11 +5,12 @@
 // - liveness: /health/live selalu 200.
 // - route selain itu: 404.
 // - HEALTH_TOKEN opsional: 401 tanpa/salah token saat diaktifkan.
+// - binding: non-loopback tanpa token -> fallback ke 127.0.0.1.
 // - response TIDAK pernah mengandung token/credential.
 
 const assert = require('node:assert');
 const { STATUS } = require('../account-manager.js');
-const { createHealthServer } = require('../health.js');
+const { createHealthServer, isLoopbackHost, resolveHealthBinding } = require('../health.js');
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -111,6 +112,23 @@ function close(server) {
     } finally {
       await close(server);
     }
+  }
+
+  // 4. resolveHealthBinding: non-loopback tanpa token -> fallback 127.0.0.1.
+  {
+    assert.deepStrictEqual(resolveHealthBinding('0.0.0.0', null), { host: '127.0.0.1', downgraded: true });
+    assert.deepStrictEqual(resolveHealthBinding('0.0.0.0', '   '), { host: '127.0.0.1', downgraded: true });
+    assert.deepStrictEqual(resolveHealthBinding(' 0.0.0.0 ', undefined), { host: '127.0.0.1', downgraded: true });
+    assert.deepStrictEqual(resolveHealthBinding('0.0.0.0', 'secret-token'), { host: '0.0.0.0', downgraded: false });
+    assert.deepStrictEqual(resolveHealthBinding('127.0.0.1', null), { host: '127.0.0.1', downgraded: false });
+    assert.deepStrictEqual(resolveHealthBinding('localhost', null), { host: 'localhost', downgraded: false });
+    assert.deepStrictEqual(resolveHealthBinding('::1', null), { host: '::1', downgraded: false });
+    assert.deepStrictEqual(resolveHealthBinding('', null), { host: '127.0.0.1', downgraded: false });
+    assert.strictEqual(isLoopbackHost('127.0.0.1'), true);
+    assert.strictEqual(isLoopbackHost('localhost'), true);
+    assert.strictEqual(isLoopbackHost('::1'), true);
+    assert.strictEqual(isLoopbackHost('0.0.0.0'), false);
+    console.log('PASS 4: resolveHealthBinding — non-loopback tanpa token di-fallback ke 127.0.0.1');
   }
 
   console.log('Semua smoke test health lulus.');

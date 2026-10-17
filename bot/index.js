@@ -11,7 +11,7 @@ const {
   startAll,
   stopAll,
 } = require('./account-manager.js');
-const { createHealthServer } = require('./health.js');
+const { createHealthServer, isLoopbackHost, resolveHealthBinding } = require('./health.js');
 
 function validateLegacyEnvVars() {
   const requiredEnvVars = ['DISCORD_TOKEN', 'VOICE_CHANNEL_ID'];
@@ -68,23 +68,22 @@ function startBot(accounts) {
   const registry = startAll(accounts);
 
   // Satu HTTP health check untuk seluruh process (bukan per account).
-  // Default bind ke 127.0.0.1 (localhost) supaya tidak terekspos publik tanpa
-  // autentikasi; set HOST=0.0.0.0 hanya kalau memang perlu (mis. lewat proxy)
-  // dan pasang HEALTH_TOKEN untuk proteksi.
+  // Default bind ke 127.0.0.1 (localhost). HOST non-loopback hanya diizinkan
+  // kalau HEALTH_TOKEN diaktifkan; tanpa token, binding otomatis fallback ke
+  // 127.0.0.1 supaya endpoint tidak pernah terbuka publik tanpa autentikasi.
   const port = process.env.PORT || 3000;
-  const host = process.env.HOST || '127.0.0.1';
+  const requestedHost = process.env.HOST || '127.0.0.1';
   const healthToken = process.env.HEALTH_TOKEN;
+  const binding = resolveHealthBinding(requestedHost, healthToken);
   const server = createHealthServer(registry, { token: healthToken });
 
-  server.listen(port, host, () => {
-    console.log(`[INFO] Health check server listening on http://${host}:${port}/health`);
-    const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(host);
-    const hasToken = Boolean(healthToken && healthToken.trim());
-    if (!isLoopback && !hasToken) {
+  server.listen(port, binding.host, () => {
+    console.log(`[INFO] Health check server listening on http://${binding.host}:${port}/health`);
+    if (binding.downgraded) {
       console.warn(
-        '[WARN] Health check di-bind ke non-loopback TANPA HEALTH_TOKEN. Set HEALTH_TOKEN atau jangan ekspos port ini ke publik.',
+        `[WARN] HOST=${requestedHost} tanpa HEALTH_TOKEN ditolak demi keamanan: health server di-bind ke 127.0.0.1 (tidak terekspos). Set HEALTH_TOKEN untuk bind ke ${requestedHost}.`,
       );
-    } else if (!isLoopback) {
+    } else if (!isLoopbackHost(binding.host)) {
       console.log('[INFO] Health check dilindungi HEALTH_TOKEN (header: Authorization: Bearer <token>).');
     }
   });

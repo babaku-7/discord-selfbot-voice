@@ -35,6 +35,28 @@ function resolveHealthToken(options = {}) {
   return null;
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
+/** @param {string} host */
+function isLoopbackHost(host) {
+  return LOOPBACK_HOSTS.has(typeof host === 'string' ? host.trim() : '');
+}
+
+/**
+ * Menentukan host binding health server. Demi keamanan, host non-loopback
+ * hanya diizinkan kalau token aktif; tanpa token, bind fallback ke 127.0.0.1
+ * supaya endpoint tidak pernah terbuka publik tanpa autentikasi.
+ * @param {string} [host] Nilai HOST (env)
+ * @param {?string} [token] Token health (lihat resolveHealthToken)
+ * @returns {{ host: string, downgraded: boolean }}
+ */
+function resolveHealthBinding(host, token) {
+  const requested = typeof host === 'string' && host.trim() ? host.trim() : '127.0.0.1';
+  const hasToken = typeof token === 'string' && token.trim().length > 0;
+  if (isLoopbackHost(requested) || hasToken) return { host: requested, downgraded: false };
+  return { host: '127.0.0.1', downgraded: true };
+}
+
 function isAuthorized(req, token) {
   const header = req.headers.authorization;
   if (typeof header !== 'string') return false;
@@ -97,5 +119,7 @@ module.exports = {
   READY_STATUSES,
   summarizeRegistry,
   resolveHealthToken,
+  isLoopbackHost,
+  resolveHealthBinding,
   createHealthServer,
 };

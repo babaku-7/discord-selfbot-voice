@@ -353,7 +353,7 @@ Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
      file `bot/accounts.json` (lihat section Multi Account).
 
 Health check tersedia di port `PORT` (default `3000`), listen di `127.0.0.1`
-secara default (set `HOST=0.0.0.0` hanya kalau perlu diakses dari luar):
+secara default:
 
 * `GET /health` — readiness: `200` kalau minimal satu akun sudah login
   (ready), `503` kalau tidak ada. Body JSON berisi status per akun
@@ -361,8 +361,10 @@ secara default (set `HOST=0.0.0.0` hanya kalau perlu diakses dari luar):
 * `GET /health/live` — liveness: selalu `200` selama proses hidup.
 * Route lain dibalas `404`.
 * Kalau `HEALTH_TOKEN` diisi, semua request harus menyertakan header
-  `Authorization: Bearer <token>` (`401` kalau tidak) — disarankan saat
-  `HOST` bukan loopback.
+  `Authorization: Bearer <token>` (`401` kalau tidak).
+* Health server tidak pernah terbuka tanpa autentikasi: `HOST=0.0.0.0`
+  (non-loopback) hanya dipakai kalau `HEALTH_TOKEN` diisi — kalau tidak,
+  server tetap di-bind ke `127.0.0.1` disertai warning di log.
 * Status akun mengikuti kondisi nyata: gateway putus sementara →
   `reconnecting` (kembali `ready` kalau pulih; turun ke `error` kalau tidak
   pulih dalam 60 detik), gateway mati permanen atau sesi invalid → `error`

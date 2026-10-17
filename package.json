@@ -7,12 +7,8 @@
   "scripts": {
     "start": "node bot/index.js",
     "test": "node bot/tests/run.js",
-    "fix:all": "npm run lint:fix && npm run format",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write src/**/*.js typings/**/*.ts",
-    "lint:all": "npm run lint",
-    "build": "npm run lint:fix && npm run format"
+    "lint:fix": "eslint . --fix"
   },
   "repository": {
     "type": "git",
@@ -60,7 +56,6 @@
     "node": ">=20.18"
   },
   "devDependencies": {
-    "eslint": "^8.39.0",
-    "prettier": "^2.8.8"
+    "eslint": "^8.39.0"
   }
 }

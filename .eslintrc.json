@@ -8,5 +8,5 @@
     "ecmaVersion": 2022
   },
   "extends": ["eslint:recommended"],
-  "ignorePatterns": ["src/", "typings/", "node_modules/"]
+  "ignorePatterns": ["src/", "node_modules/"]
 }
