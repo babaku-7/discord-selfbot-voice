@@ -3,6 +3,12 @@
     "name": "akun1",
     "token": "YOUR_DISCORD_TOKEN",
     "voiceChannelId": "YOUR_VOICE_CHANNEL_ID",
+    "stream": {
+      "enabled": false,
+      "source": "/path/ke/video.mp4",
+      "fps": 10,
+      "bitrate": 200
+    },
     "rpc": {
       "enabled": true,
       "applicationId": "YOUR_APPLICATION_ID",

@@ -14,17 +14,29 @@
 
 const DEFAULT_FPS = 10;
 const DEFAULT_BITRATE = 200; // kbps
-const RESTART_DELAY_MS = 5000;
+const MIN_FPS = 1;
+const MAX_FPS = 30;
+const MIN_BITRATE = 1;
+const MAX_BITRATE = 8000;
+const DEFAULT_RESTART_DELAY_MS = 5000;
+const MAX_RESTART_DELAY_MS = 60000;
+const MAX_RESTARTS = 10;
 
 function logPrefix(accountName) {
   return accountName ? `[ACCOUNT: ${accountName}]` : '[STREAM]';
 }
 
+function clampInt(value, min, max) {
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
 /**
  * Normalisasi konfigurasi stream dari accounts.json.
+ * fps/bitrate di-clamp eksplisit supaya nilai aneh (0.5, 31, 999999) tidak
+ * menghasilkan dispatcher rusak (mis. TIMESTAMP_INC = 90000/0 = Infinity).
  * @param {object} raw Konfigurasi mentah (account.stream)
  * @param {string} [accountName] Nama akun untuk prefix log
- * @returns {?{source: string, fps: number, bitrate: number}}
+ * @returns {?{source: string, fps: number, bitrate: number, restartDelayMs: number}}
  */
 function normalizeStreamConfig(raw, accountName) {
   const prefix = logPrefix(accountName);
@@ -37,10 +49,15 @@ function normalizeStreamConfig(raw, accountName) {
     return null;
   }
 
-  const fps = Number.isFinite(raw.fps) && raw.fps > 0 && raw.fps <= 30 ? Math.floor(raw.fps) : DEFAULT_FPS;
-  const bitrate = Number.isFinite(raw.bitrate) && raw.bitrate > 0 ? Math.floor(raw.bitrate) : DEFAULT_BITRATE;
+  const fps = Number.isFinite(raw.fps) ? clampInt(raw.fps, MIN_FPS, MAX_FPS) : DEFAULT_FPS;
+  const bitrate = Number.isFinite(raw.bitrate)
+    ? clampInt(raw.bitrate, MIN_BITRATE, MAX_BITRATE)
+    : DEFAULT_BITRATE;
+  const restartDelayMs = Number.isFinite(raw.restartDelayMs)
+    ? clampInt(raw.restartDelayMs, 1, MAX_RESTART_DELAY_MS)
+    : DEFAULT_RESTART_DELAY_MS;
 
-  return { source, fps, bitrate };
+  return { source, fps, bitrate, restartDelayMs };
 }
 
 /**
@@ -82,8 +99,8 @@ async function startScreenshare(client, rawConfig, accountName) {
   let streamConnection;
   let dispatcher;
   let restartTimer = null;
+  let restartCount = 0;
   let stopped = false;
-  let frameCount = 0;
 
   const stop = () => {
     if (stopped) return;
@@ -92,16 +109,16 @@ async function startScreenshare(client, rawConfig, accountName) {
       clearTimeout(restartTimer);
       restartTimer = null;
     }
-    try {
-      streamConnection?.sendStopScreenshare();
-    } catch {
-      // Diabaikan.
-    }
+    // Matikan encoder lebih dulu supaya ffmpeg tidak hidup lebih lama dari stream.
     try {
       dispatcher?.destroy();
     } catch {
       // Diabaikan: ffmpeg mungkin sudah mati.
     }
+    // JANGAN panggil sendStopScreenshare() di sini. Method itu men-set flag
+    // internal (#requestDisconnect) yang membuat disconnect() berikutnya
+    // langsung return, sehingga WS/UDP tidak pernah ditutup dan WS rekonek
+    // sendiri (zombie). disconnect() sudah mengirim STREAM_DELETE.
     try {
       streamConnection?.disconnect();
     } catch {
@@ -109,7 +126,29 @@ async function startScreenshare(client, rawConfig, accountName) {
     }
   };
 
-  const play = () => {
+  const scheduleRestart = (reason) => {
+    if (stopped || restartTimer) return;
+    if (restartCount >= MAX_RESTARTS) {
+      console.error(`${prefix} Stream berhenti (${reason}) setelah ${restartCount}x restart, menyerah.`);
+      return;
+    }
+    const delay = Math.min(config.restartDelayMs * 2 ** restartCount, MAX_RESTART_DELAY_MS);
+    restartCount += 1;
+    console.warn(`${prefix} Stream berhenti (${reason}). Restart ke-${restartCount} dalam ${delay} ms.`);
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      if (stopped) return;
+      try {
+        play();
+      } catch (restartError) {
+        console.error(`${prefix} Gagal restart stream: ${restartError.message}`);
+        scheduleRestart('restart gagal');
+      }
+    }, delay);
+    restartTimer.unref?.();
+  };
+
+  function play() {
     dispatcher = streamConnection.playVideo(config.source, {
       fps: config.fps,
       bitrate: config.bitrate,
@@ -118,53 +157,41 @@ async function startScreenshare(client, rawConfig, accountName) {
       // Loop tanpa henti + baca sesuai kecepatan asli supaya CPU tidak dipaksa.
       inputFFmpegArgs: ['-stream_loop', '-1', '-re'],
     });
-    // Diagnostik: jumlah frame yang benar-benar keluar dari ffmpeg + status
-    // dispatcher, supaya kelihatan apakah paket video benar-benar terkirim.
-    frameCount = 0;
-    const videoStream = dispatcher && dispatcher.streams ? dispatcher.streams.video : null;
-    if (videoStream && typeof videoStream.on === 'function') {
-      videoStream.on('data', () => {
-        frameCount += 1;
+
+    // BaseDispatcher merutekan error stream video ke event 'debug' (bukan
+    // 'error') karena tidak ada audio dispatcher, jadi restart dipicu oleh
+    // 'close' dari proses ffmpeg.
+    const ffmpegStream = dispatcher && dispatcher.streams ? dispatcher.streams.ffmpeg : null;
+    if (ffmpegStream && typeof ffmpegStream.once === 'function') {
+      ffmpegStream.once('close', () => scheduleRestart('ffmpeg berhenti'));
+    }
+    if (typeof dispatcher.on === 'function') {
+      dispatcher.on('error', (error) => {
+        const message = error && error.message ? error.message : String(error);
+        console.warn(`${prefix} Video dispatcher error: ${message}`);
+      });
+      dispatcher.once('start', () => console.log(`${prefix} Video dispatcher mulai mengirim frame.`));
+      // Event ini terpicu tiap paket video; log hanya saat nilainya berubah
+      // supaya log tidak banjir (~fps baris/detik).
+      let lastVideoStatus = null;
+      let lastStreamStatus = null;
+      dispatcher.on('videoStatus', (value) => {
+        if (value === lastVideoStatus) return;
+        lastVideoStatus = value;
+        console.log(`${prefix} videoStatus=${value}`);
+      });
+      dispatcher.on('streamStatus', (value) => {
+        if (value === lastStreamStatus) return;
+        lastStreamStatus = value;
+        console.log(`${prefix} streamStatus(paused)=${value}`);
       });
     }
-    dispatcher.on('start', () => console.log(`${prefix} Video dispatcher mulai mengirim frame.`));
-    // Event ini terpicu tiap paket video; log hanya saat nilainya berubah supaya
-    // log tidak banjir (~10 baris/detik).
-    let lastVideoStatus = null;
-    let lastStreamStatus = null;
-    dispatcher.on('videoStatus', (value) => {
-      if (value === lastVideoStatus) return;
-      lastVideoStatus = value;
-      console.log(`${prefix} videoStatus=${value}`);
-    });
-    dispatcher.on('streamStatus', (value) => {
-      if (value === lastStreamStatus) return;
-      lastStreamStatus = value;
-      console.log(`${prefix} streamStatus(paused)=${value}`);
-    });
-    dispatcher.on('error', (error) => {
-      const message = error && error.message ? error.message : String(error);
-      console.warn(`${prefix} Video dispatcher error: ${message}`);
-      if (stopped) return;
-      if (restartTimer) return;
-      restartTimer = setTimeout(() => {
-        restartTimer = null;
-        if (stopped) return;
-        try {
-          play();
-        } catch (restartError) {
-          console.error(`${prefix} Gagal restart stream: ${restartError.message}`);
-        }
-      }, RESTART_DELAY_MS);
-      restartTimer.unref?.();
-    });
+
     // createStreamConnection() mengirim state awal paused=true; buka supaya
     // penonton benar-benar melihat frame (tanpa ini badge bisa tetap "paused").
     streamConnection.sendScreenshareState(false);
-    console.log(
-      `${prefix} Screenshare aktif: ${config.source} (${config.fps}fps, ${config.bitrate}kbps)`,
-    );
-  };
+    console.log(`${prefix} Screenshare aktif: ${config.source} (${config.fps}fps, ${config.bitrate}kbps)`);
+  }
 
   try {
     streamConnection = await connection.createStreamConnection();
@@ -190,40 +217,41 @@ async function startScreenshare(client, rawConfig, accountName) {
     return null;
   }
 
-  const handle = { stop, streamConnection, get dispatcher() { return dispatcher; } };
+  const handle = {
+    stop,
+    streamConnection,
+    get dispatcher() {
+      return dispatcher;
+    },
+  };
   client._screenShare = handle;
 
+  // Bersihkan otomatis saat voice putus (mis. rejoin/watchdog) supaya proses
+  // ffmpeg tidak menggantung. stop() idempotent, jadi aman dipanggil berlapis.
+  connection.once('disconnect', stop);
+  streamConnection.once('disconnect', () => {
+    if (client._screenShare === handle) client._screenShare = null;
+    stop();
+  });
+
   // Verifikasi nyata dari sisi Discord: saat Go Live aktif, gateway mengirim
-  // VOICE_STATE_UPDATE dengan self_stream=true. Ini bukti badge LIVE menyala,
-  // bukan cuma "ffmpeg jalan".
+  // VOICE_STATE_UPDATE dengan self_stream=true (dipetakan sebagai `.streaming`).
   const verifyTimer = setTimeout(() => {
     if (stopped) return;
     try {
       const guildState = connection.channel?.guild?.voiceStates?.cache?.get(client.user.id);
       const clientState = client.voiceStates?.cache?.get(client.user.id);
-      // VoiceState menyimpan flag ini sebagai `.streaming`, bukan `.selfStream`.
       const selfStream = Boolean(guildState?.streaming ?? clientState?.streaming);
       console.log(
-        `${prefix} Cek badge LIVE: self_stream=${selfStream} | frame terkirim=${frameCount} | udp=${
+        `${prefix} Cek badge LIVE: self_stream=${selfStream} | udp=${
           streamConnection?.sockets?.udp ? 'ada' : 'tidak ada'
-        } | status=${streamConnection?.status}`,
+        } | status=${streamConnection?.status} | restart=${restartCount}`,
       );
     } catch {
       // Diabaikan: cache belum siap.
     }
   }, 12000);
   verifyTimer.unref?.();
-
-  // Bersihkan otomatis saat voice putus (mis. rejoin/watchdog) supaya proses
-  // ffmpeg tidak menggantung.
-  connection.once('disconnect', stop);
-  streamConnection.once('disconnect', () => {
-    if (client._screenShare === handle) client._screenShare = null;
-    if (restartTimer) {
-      clearTimeout(restartTimer);
-      restartTimer = null;
-    }
-  });
 
   return handle;
 }
@@ -232,4 +260,7 @@ module.exports = {
   startScreenshare,
   stopScreenshare,
   normalizeStreamConfig,
+  MAX_FPS,
+  MAX_BITRATE,
+  MAX_RESTARTS,
 };

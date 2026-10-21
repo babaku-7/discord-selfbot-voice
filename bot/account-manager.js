@@ -257,8 +257,21 @@ function startAccount(account, registry, deps = {}) {
     const recoveredFromReconnecting = entry.status === STATUS.RECONNECTING;
     const recoveredAfterTimeout = entry.status === STATUS.ERROR && entry.lastReadyAt;
     if (recoveredFromReconnecting || recoveredAfterTimeout) {
-      setStatus(registry, name, STATUS.READY);
-      console.log(`[ACCOUNT: ${name}] Gateway pulih, status kembali ready.`);
+      // Jangan timpa voice_connected dengan ready kalau voice masih nyambung:
+      // /health adalah sumber otoritatif kondisi voice per akun.
+      const voiceConnection = client.voice ? client.voice.connection : null;
+      const targetChannelId = account.voiceChannelId;
+      const voiceConnected = Boolean(
+        voiceConnection &&
+          targetChannelId &&
+          voiceConnection.channel &&
+          voiceConnection.channel.id === targetChannelId &&
+          voiceConnection.status !== 4,
+      );
+      setStatus(registry, name, voiceConnected ? STATUS.VOICE_CONNECTED : STATUS.READY);
+      console.log(
+        `[ACCOUNT: ${name}] Gateway pulih, status kembali ${voiceConnected ? 'voice_connected' : 'ready'}.`,
+      );
     }
   };
 
@@ -344,6 +357,19 @@ function startAccount(account, registry, deps = {}) {
   client.on('invalidated', () => {
     if (client.ws?.destroyed) return;
     markGatewayFatal('Sesi Discord invalid (kemungkinan token dicabut), client dihentikan.');
+    // Client.destroy() tidak menyentuh voice/stream: matikan dulu supaya
+    // ffmpeg + stream WS tidak hidup lebih lama dari client.
+    try {
+      stopScreenshare(client);
+    } catch (error) {
+      console.error(`[ACCOUNT: ${name}] Gagal stop screenshare saat invalidated: ${error.message}`);
+    }
+    try {
+      const handler = registry.get(name) && registry.get(name).voiceHandler;
+      if (handler && typeof handler.stop === 'function') handler.stop();
+    } catch (error) {
+      console.error(`[ACCOUNT: ${name}] Gagal stop voice handler saat invalidated: ${error.message}`);
+    }
     try {
       client.destroy();
     } catch (error) {

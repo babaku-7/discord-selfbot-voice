@@ -97,20 +97,34 @@ function collectButtonsFromConfig(config, prefix) {
   return buttons;
 }
 
+const KNOWN_ACTIVITY_TYPES = new Set(['PLAYING', 'STREAMING', 'LISTENING', 'WATCHING', 'COMPETING']);
+
 function applyActivityType(rpc, config, prefix) {
   const rawType = emptyToNull(config.type);
   if (!rawType) return;
   const type = rawType.trim().toUpperCase();
   if (type === 'PLAYING') return;
+  if (!KNOWN_ACTIVITY_TYPES.has(type)) {
+    // ActivityTypes[tidak dikenal] = undefined, dan setType() tidak throw,
+    // jadi validasi harus di sini supaya log tidak menyesatkan.
+    console.warn(`${prefix} type "${type}" tidak dikenal, tetap memakai PLAYING.`);
+    return;
+  }
   if (type === 'STREAMING') {
     const url = emptyToNull(config.url);
     if (!url) {
       console.warn(`${prefix} type STREAMING butuh "url", tetap memakai PLAYING.`);
       return;
     }
+    if (typeof URL.canParse === 'function' && !URL.canParse(url)) {
+      console.warn(`${prefix} url "${url}" tidak valid, tetap memakai PLAYING.`);
+      return;
+    }
     try {
-      rpc.setType('STREAMING');
+      // Set URL dulu, baru type: kalau URL invalid, activity tidak terlanjur
+      // berubah jadi STREAMING tanpa url (presence seperti itu ditolak Discord).
       rpc.setURL(url);
+      rpc.setType('STREAMING');
       console.log(`${prefix} RPC type: STREAMING (${url})`);
     } catch (error) {
       console.warn(`${prefix} type STREAMING dilewati: ${error.message}`);

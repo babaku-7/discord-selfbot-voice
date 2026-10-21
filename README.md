@@ -294,8 +294,10 @@ Tanpa ffmpeg, screenshare dilewati dan akun tetap bergabung ke voice seperti bia
 
 * `enabled` — wajib `true` untuk menyalakan screenshare.
 * `source` — path file video lokal atau URL (`http(s)`) yang bisa dibaca ffmpeg.
-* `fps` — frame rate kirim. Default `10`, maksimal `30`. Semakin kecil semakin hemat CPU.
-* `bitrate` — bitrate video dalam kbps. Default `200`.
+* `fps` — frame rate kirim, di-clamp ke `1..30`. Default `10`. Semakin kecil semakin hemat CPU.
+* `bitrate` — bitrate video dalam kbps, di-clamp ke `1..8000`. Default `200`.
+* `restartDelayMs` — jeda awal sebelum restart otomatis kalau encoder berhenti
+  (default `5000`, naik 2x tiap percobaan, maksimal 10 percobaan).
 
 Catatan:
 
@@ -303,6 +305,9 @@ Catatan:
   lebih ringan: 480p @ 5 fps sekitar 1-2% CPU dan ~60 MB RAM. 720p30 tidak
   disarankan di VPS 1 GB.
 * Video di-loop otomatis (`-stream_loop -1 -re`), jadi pakai klip pendek.
+* Kalau proses `ffmpeg` mati (file hilang, OOM-kill, decode error), stream
+  di-restart otomatis dengan backoff, dibatasi `10` percobaan. Setelah itu
+  menyerah dan hanya menulis error ke log sampai voice rejoin.
 * Screenshare ikut menyala lagi saat rejoin voice / watchdog menyambungkan ulang,
   dan dimatikan saat voice putus atau bot shutdown (tidak ada ffmpeg menggantung).
 * Verifikasi nyata ada di log: `Cek badge LIVE: self_stream=true`. Nilai ini

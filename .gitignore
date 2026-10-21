@@ -86,3 +86,7 @@ yarn.lock
 
 # File backup manual (jangan di-commit)
 *.bak-*
+
+# Backup file (jangan sampai token ikut ter-commit)
+*.bak
+bot/accounts.json*
