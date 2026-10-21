@@ -36,6 +36,8 @@ function getRpcConfig() {
   return {
     enabled: isTruthy(process.env.RPC_ENABLED || ''),
     applicationId: emptyToNull(process.env.RPC_APPLICATION_ID),
+    type: emptyToNull(process.env.RPC_TYPE),
+    url: emptyToNull(process.env.RPC_URL),
     name: emptyToNull(process.env.RPC_NAME),
     details: emptyToNull(process.env.RPC_DETAILS),
     state: emptyToNull(process.env.RPC_STATE),
@@ -63,6 +65,8 @@ function normalizeRpcConfig(rpcConfig) {
   return {
     enabled: toBool(rpcConfig.enabled, false),
     applicationId: emptyToNull(rpcConfig.applicationId),
+    type: emptyToNull(rpcConfig.type),
+    url: emptyToNull(rpcConfig.url),
     name: emptyToNull(rpcConfig.name),
     details: emptyToNull(rpcConfig.details),
     state: emptyToNull(rpcConfig.state),
@@ -91,6 +95,34 @@ function collectButtonsFromConfig(config, prefix) {
     console.warn(`${prefix} Button 2 tidak lengkap (butuh nama dan URL), dilewati.`);
   }
   return buttons;
+}
+
+function applyActivityType(rpc, config, prefix) {
+  const rawType = emptyToNull(config.type);
+  if (!rawType) return;
+  const type = rawType.trim().toUpperCase();
+  if (type === 'PLAYING') return;
+  if (type === 'STREAMING') {
+    const url = emptyToNull(config.url);
+    if (!url) {
+      console.warn(`${prefix} type STREAMING butuh "url", tetap memakai PLAYING.`);
+      return;
+    }
+    try {
+      rpc.setType('STREAMING');
+      rpc.setURL(url);
+      console.log(`${prefix} RPC type: STREAMING (${url})`);
+    } catch (error) {
+      console.warn(`${prefix} type STREAMING dilewati: ${error.message}`);
+    }
+    return;
+  }
+  try {
+    rpc.setType(type);
+    console.log(`${prefix} RPC type: ${type}`);
+  } catch (error) {
+    console.warn(`${prefix} type "${type}" tidak valid, tetap memakai PLAYING: ${error.message}`);
+  }
 }
 
 function applyAssets(rpc, config, prefix) {
@@ -140,6 +172,7 @@ function buildPresenceFromConfig(client, config, prefix) {
   if (config.details) rpc.setDetails(config.details);
   if (config.state) rpc.setState(config.state);
 
+  applyActivityType(rpc, config, prefix);
   applyAssets(rpc, config, prefix);
   applyButtons(rpc, collectButtonsFromConfig(config, prefix), prefix);
   applyStartTimestamp(rpc, config.startTimestamp, client);

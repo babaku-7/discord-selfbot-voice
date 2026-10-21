@@ -264,8 +264,51 @@ mode** (konfigurasi `.env` lama: `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`,
 * `rpc` — konfigurasi Rich Presence akun tersebut (opsional). Field-nya sama
   seperti variable `RPC_*` pada section Custom Rich Presence. Setiap akun
   memiliki RPC dan timestamp sendiri yang tidak tertukar.
+* `stream` — konfigurasi screenshare / Go Live akun tersebut (opsional).
+  Lihat section Screenshare (Go Live).
 
 Jangan menaruh token asli di README, issue, atau commit.
+
+### Screenshare (Go Live)
+
+Akun bisa menyalakan badge **LIVE** di voice channel (Go Live / screenshare),
+bukan sekadar status RPC "Streaming" di profil. Ini memutar video dari file
+secara loop, jadi tidak perlu capture layar.
+
+Syarat: `ffmpeg` harus tersedia di `PATH` (mis. `sudo apt-get install -y ffmpeg`).
+Tanpa ffmpeg, screenshare dilewati dan akun tetap bergabung ke voice seperti biasa.
+
+```json
+{
+  "name": "akun1",
+  "token": "TOKEN",
+  "voiceChannelId": "VOICE_CHANNEL_ID",
+  "stream": {
+    "enabled": true,
+    "source": "/path/ke/video.mp4",
+    "fps": 5,
+    "bitrate": 100
+  }
+}
+```
+
+* `enabled` — wajib `true` untuk menyalakan screenshare.
+* `source` — path file video lokal atau URL (`http(s)`) yang bisa dibaca ffmpeg.
+* `fps` — frame rate kirim. Default `10`, maksimal `30`. Semakin kecil semakin hemat CPU.
+* `bitrate` — bitrate video dalam kbps. Default `200`.
+
+Catatan:
+
+* Satu proses `ffmpeg` per akun yang streaming. Video-only (tanpa audio) jauh
+  lebih ringan: 480p @ 5 fps sekitar 1-2% CPU dan ~60 MB RAM. 720p30 tidak
+  disarankan di VPS 1 GB.
+* Video di-loop otomatis (`-stream_loop -1 -re`), jadi pakai klip pendek.
+* Screenshare ikut menyala lagi saat rejoin voice / watchdog menyambungkan ulang,
+  dan dimatikan saat voice putus atau bot shutdown (tidak ada ffmpeg menggantung).
+* Verifikasi nyata ada di log: `Cek badge LIVE: self_stream=true`. Nilai ini
+  berasal dari `VOICE_STATE_UPDATE` Discord, bukan tebakan lokal.
+* Untuk sekadar status ungu "Streaming" di profil (tanpa media), gunakan
+  `rpc.type: "STREAMING"` + `rpc.url` — bukan fitur screenshare ini.
 
 ### Cara kembali ke mode single-account
 

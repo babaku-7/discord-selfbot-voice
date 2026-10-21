@@ -83,3 +83,6 @@ deploy/deploy_key.pub
 data/
 update.mjs
 yarn.lock
+
+# File backup manual (jangan di-commit)
+*.bak-*

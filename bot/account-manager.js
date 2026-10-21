@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const process = require('node:process');
 const { setupVoiceChannel, resolveVoiceChannelId } = require('./voice-handler.js');
+const { startScreenshare, stopScreenshare } = require('./stream-handler.js');
 const { setupRichPresence, getRpcConfig } = require('./rpc.js');
 const { Client } = require('../src/index.js');
 
@@ -133,7 +134,21 @@ function validateAccount(rawAccount, index, usedNames) {
     rpc = null;
   }
 
-  return { skipped: false, account: { name, token, voiceChannelId, allowEnvFallback: false, rpc } };
+  // Screenshare (Go Live) opsional per akun. Tanpa stream.enabled=true,
+  // tidak ada ffmpeg yang dijalankan sama sekali.
+  let stream = rawAccount && rawAccount.stream !== undefined ? rawAccount.stream : null;
+  if (stream !== null && (typeof stream !== 'object' || Array.isArray(stream))) {
+    console.warn(`[ACCOUNT: ${name}] Format stream tidak valid, screenshare dinonaktifkan.`);
+    stream = null;
+  } else if (stream && stream.enabled === true && !(typeof stream.source === 'string' && stream.source.trim())) {
+    console.warn(`[ACCOUNT: ${name}] stream.enabled=true tapi source kosong, screenshare dinonaktifkan.`);
+    stream = null;
+  }
+
+  return {
+    skipped: false,
+    account: { name, token, voiceChannelId, allowEnvFallback: false, rpc, stream },
+  };
 }
 
 /**
@@ -281,6 +296,14 @@ function startAccount(account, registry, deps = {}) {
         if (current && (current.status === STATUS.VOICE_CONNECTING || current.status === STATUS.READY)) {
           setStatus(registry, name, STATUS.VOICE_CONNECTED);
         }
+        // Screenshare (Go Live) hanya untuk akun yang mengaktifkannya.
+        // Dipanggil ulang setiap rejoin; startScreenshare() membersihkan
+        // stream lama lebih dulu supaya tidak menumpuk proses ffmpeg.
+        if (account.stream && account.stream.enabled === true) {
+          startScreenshare(client, account.stream, name).catch((streamError) => {
+            console.error(`[ACCOUNT: ${name}] Screenshare gagal: ${streamError.message}`);
+          });
+        }
       },
     };
 
@@ -396,6 +419,12 @@ function stopAll(registry) {
       }
     } catch (error) {
       console.error(`[ACCOUNT: ${name}] Gagal stop voice handler: ${error.message}`);
+    }
+    // Matikan ffmpeg screenshare supaya tidak ada proses menggantung.
+    try {
+      if (entry.client) stopScreenshare(entry.client);
+    } catch (error) {
+      console.error(`[ACCOUNT: ${name}] Gagal stop screenshare: ${error.message}`);
     }
     try {
       if (entry.client && typeof entry.client.destroy === 'function') {
