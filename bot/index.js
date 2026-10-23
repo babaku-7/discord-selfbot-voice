@@ -10,6 +10,7 @@ const {
   accountFromEnv,
   startAll,
   stopAll,
+  startVoiceSupervisor,
 } = require('./account-manager.js');
 const { createHealthServer, isLoopbackHost, resolveHealthBinding } = require('./health.js');
 
@@ -67,6 +68,11 @@ function resolveAccounts() {
 function startBot(accounts) {
   const registry = startAll(accounts);
 
+  // Supervisor voice: relogin per akun kalau voice-nya macet (join timeout
+  // berulang) sementara akun lain sehat. Tanpa ini akun yang macet bisa
+  // "online tapi tidak di voice" berjam-jam sampai proses di-restart manual.
+  const voiceSupervisor = startVoiceSupervisor(registry);
+
   // Satu HTTP health check untuk seluruh process (bukan per account).
   // Default bind ke 127.0.0.1 (localhost). HOST non-loopback hanya diizinkan
   // kalau HEALTH_TOKEN diaktifkan; tanpa token, binding otomatis fallback ke
@@ -97,6 +103,7 @@ function startBot(accounts) {
     shuttingDown = true;
     console.log(`[INFO] Menerima ${signal}, menghentikan bot...`);
     server.close();
+    voiceSupervisor.stop();
     stopAll(registry);
     // Jangan panggil process.exit() langsung: itu bisa memotong output log yang
     // belum ter-flush dan memutus socket secara kasar. Biarkan event loop

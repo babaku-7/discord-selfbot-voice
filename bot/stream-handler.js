@@ -99,6 +99,7 @@ async function startScreenshare(client, rawConfig, accountName) {
   let streamConnection;
   let dispatcher;
   let restartTimer = null;
+  let statsTimer = null;
   let restartCount = 0;
   let stopped = false;
 
@@ -108,6 +109,10 @@ async function startScreenshare(client, rawConfig, accountName) {
     if (restartTimer) {
       clearTimeout(restartTimer);
       restartTimer = null;
+    }
+    if (statsTimer) {
+      clearInterval(statsTimer);
+      statsTimer = null;
     }
     // Matikan encoder lebih dulu supaya ffmpeg tidak hidup lebih lama dari stream.
     try {
@@ -156,6 +161,11 @@ async function startScreenshare(client, rawConfig, accountName) {
       highWaterMark: 2,
       // Loop tanpa henti + baca sesuai kecepatan asli supaya CPU tidak dipaksa.
       inputFFmpegArgs: ['-stream_loop', '-1', '-re'],
+      // Library hanya memaksa keyframe sekali di detik ke-2 (`-force_key_frames
+      // 00:02`), sehingga penonton yang bergabung belakangan tidak pernah dapat
+      // keyframe dan layarnya hitam. Paksa GOP pendek (~2 detik) supaya tiap
+      // penonton baru bisa decode dalam ~2 detik.
+      outputFFmpegArgs: ['-g', String(config.fps * 2), '-keyint_min', String(config.fps)],
     });
 
     // BaseDispatcher merutekan error stream video ke event 'debug' (bukan
@@ -191,6 +201,49 @@ async function startScreenshare(client, rawConfig, accountName) {
     // penonton benar-benar melihat frame (tanpa ini badge bisa tetap "paused").
     streamConnection.sendScreenshareState(false);
     console.log(`${prefix} Screenshare aktif: ${config.source} (${config.fps}fps, ${config.bitrate}kbps)`);
+
+    // Diagnostik penonton: Discord mengirim STREAM_UPDATE berisi viewer_ids tiap
+    // kali ada yang (berhenti) menonton. Tanpa log ini "tidak bisa ditonton"
+    // tidak bisa dibedakan antara penonton tidak pernah tersambung atau
+    // tersambung tapi frame tidak ter-decode.
+    if (typeof streamConnection.on === 'function') {
+      streamConnection.on('streamUpdate', (oldData, newData) => {
+        const viewers = newData && Array.isArray(newData.viewerIds) ? newData.viewerIds : [];
+        const before = oldData && Array.isArray(oldData.viewerIds) ? oldData.viewerIds.length : 0;
+        console.log(
+          `${prefix} Stream update: viewer=${viewers.length} (sebelum ${before}) | region=${
+            newData && newData.region ? newData.region : '-'
+          } | paused=${newData ? newData.isPaused : '-'}`,
+        );
+      });
+    }
+
+    // Bukti paket benar-benar dikirim library (dispatcher.count naik per paket
+    // RTP). Kalau angka ini diam sementara ffmpeg hidup, masalahnya di
+    // dispatcher, bukan di encoder.
+    if (typeof streamConnection.on === 'function') {
+      streamConnection.on('debug', (message) => {
+        const text = String(message);
+        // Hanya kejadian penting: WS ditutup / error / negosiasi DAVE.
+        if (/\[WS\]|dave|error|closed/i.test(text)) console.log(`${prefix} stream debug: ${text}`);
+      });
+    }
+
+    statsTimer = setInterval(() => {
+      if (stopped) return;
+      const packets = dispatcher && Number.isFinite(dispatcher.count) ? dispatcher.count : -1;
+      const viewers = streamConnection && Array.isArray(streamConnection.viewerIds)
+        ? streamConnection.viewerIds.length
+        : 0;
+      const dave = streamConnection && streamConnection.dave ? streamConnection.dave : null;
+      const daveReady = Boolean(dave && dave.session && dave.session.ready);
+      console.log(
+        `${prefix} stat stream: paket=${packets} | viewer=${viewers} | status=${streamConnection?.status}` +
+          ` | dave_neg=${dave ? dave.negotiated : '-'} dave_v=${dave ? dave.version : '-'} dave_ready=${daveReady}` +
+          ` | mode=${streamConnection?.authentication?.mode ?? '-'}`,
+      );
+    }, 30000);
+    statsTimer.unref?.();
   }
 
   try {

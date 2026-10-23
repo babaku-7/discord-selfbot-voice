@@ -42,6 +42,10 @@ class VP8Dispatcher extends VideoDispatcher {
   }
 
   _codecCallback(chunk) {
+    if (this.player.voiceConnection.dave) {
+      chunk = this.player.voiceConnection.dave.encrypt(chunk, 'VP8');
+      if (!chunk) return;
+    }
     const chunkSplit = this.partitionMtu(chunk).map((c, i) => this.makeChunk(c, i === 0));
     for (let i = 0; i < chunkSplit.length; i++) {
       this._playChunk(chunkSplit[i], i + 1 === chunkSplit.length);

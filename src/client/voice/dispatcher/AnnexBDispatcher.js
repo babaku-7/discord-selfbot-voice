@@ -21,6 +21,7 @@ const { Buffer } = require('buffer');
 const VideoDispatcher = require('./VideoDispatcher');
 const Util = require('../../../util/Util');
 const { H264Helpers, H265Helpers } = require('../player/processing/AnnexBNalSplitter');
+const { lengthPrefixedToAnnexB, annexBNalus } = require('../util/VideoFrames');
 
 class AnnexBDispatcher extends VideoDispatcher {
   constructor(player, highWaterMark = 12, streams, fps, nalFunctions, payloadType) {
@@ -30,12 +31,27 @@ class AnnexBDispatcher extends VideoDispatcher {
 
   _codecCallback(frame) {
     let accessUnit = frame;
+    const dave = this.player.voiceConnection.dave;
+    if (dave) {
+      const codec = this.payloadType === Util.getPayloadType('H264') ? 'H264' : 'H265';
+      const encrypted = dave.encrypt(lengthPrefixedToAnnexB(frame), codec);
+      if (!encrypted) return;
+      accessUnit = Buffer.concat(
+        annexBNalus(encrypted).map(nalu => {
+          const size = Buffer.alloc(4);
+          size.writeUInt32BE(nalu.length);
+          return Buffer.concat([size, nalu]);
+        }),
+      );
+    }
     let offset = 0;
 
     // Extract NALUs from the access unit
     while (offset < accessUnit.length) {
+      if (offset + 4 > accessUnit.length) throw new RangeError('Truncated NAL length');
       const naluSize = accessUnit.readUInt32BE(offset);
       offset += 4;
+      if (!naluSize || offset + naluSize > accessUnit.length) throw new RangeError('Invalid NAL length');
       const nalu = accessUnit.subarray(offset, offset + naluSize);
       const isLastNal = offset + naluSize >= accessUnit.length;
       if (nalu.length <= this.mtu) {

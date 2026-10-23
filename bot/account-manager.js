@@ -30,6 +30,14 @@ const HEALTHY_STATUSES = new Set([STATUS.READY, STATUS.VOICE_CONNECTED, STATUS.V
 
 const DEFAULT_RECONNECT_GRACE_MS = 60000;
 
+// Supervisor voice: kalau satu akun tidak pernah berhasil masuk voice (mis. join
+// berulang kali timeout 15 detik) sementara akun lain sehat, sesi gateway/voice
+// akun itu dianggap macet. Client akun tersebut di-relogin supaya state gateway
+// dan voice dibuat ulang, tanpa mengganggu akun lain.
+const DEFAULT_VOICE_SUPERVISOR_INTERVAL_MS = 60000;
+const DEFAULT_VOICE_STUCK_MS = 20 * 60000;
+const MAX_VOICE_RELOGIN_COOLDOWN_MS = 4 * 60 * 60000;
+
 /**
  * Urutan pencarian accounts.json (prioritas tertinggi dulu):
  * 1. Override via env ACCOUNTS_PATH (opsional, untuk host lain/testing)
@@ -462,6 +470,146 @@ function stopAll(registry) {
   }
 }
 
+/**
+ * Cek apakah client benar-benar terhubung ke target voice channel milik akun.
+ * Dipakai supervisor karena status registry tidak otomatis turun saat koneksi
+ * voice mati diam-diam (tanpa event disconnect).
+ * @param {object} client Client Discord akun
+ * @param {object} account Account tervalidasi (butuh voiceChannelId)
+ * @returns {boolean}
+ */
+function isVoiceHealthy(client, account) {
+  if (!client || !client.voice || !account || !account.voiceChannelId) return false;
+  const connection = client.voice.connection;
+  return Boolean(
+    connection &&
+      connection.channel &&
+      connection.channel.id === account.voiceChannelId &&
+      connection.status !== 4,
+  );
+}
+
+/**
+ * Relogin satu akun saja: hentikan voice handler + screenshare, buang seluruh
+ * listener client lama (supaya event dari sesi mati tidak menyentuh entri
+ * registry yang baru), destroy client, lalu start ulang akun tersebut.
+ * Akun lain tidak tersentuh.
+ * @param {string} name Nama akun
+ * @param {Map} registry Registry hasil startAll()
+ * @param {object} [deps] Dependency injection (Client, reconnectGraceMs)
+ * @returns {boolean} true kalau start ulang dipanggil
+ */
+function reloginAccount(name, registry, deps = {}) {
+  const entry = registry.get(name);
+  if (!entry || entry.destroyed) return false;
+  const { account } = entry;
+
+  entry.destroyed = true;
+  if (entry.reconnectGraceTimer) {
+    clearTimeout(entry.reconnectGraceTimer);
+    entry.reconnectGraceTimer = null;
+  }
+  try {
+    if (entry.voiceHandler && typeof entry.voiceHandler.stop === 'function') {
+      entry.voiceHandler.stop();
+    }
+  } catch (error) {
+    console.error(`[ACCOUNT: ${name}] Gagal stop voice handler saat relogin: ${error.message}`);
+  }
+  try {
+    if (entry.client) stopScreenshare(entry.client);
+  } catch (error) {
+    console.error(`[ACCOUNT: ${name}] Gagal stop screenshare saat relogin: ${error.message}`);
+  }
+  try {
+    if (entry.client) {
+      // Listener lama dilepas sebelum destroy: handler sesi mati memakai
+      // registry.get(name) yang sekarang menunjuk entri baru.
+      if (typeof entry.client.removeAllListeners === 'function') entry.client.removeAllListeners();
+      entry.client.destroy();
+    }
+  } catch (error) {
+    console.error(`[ACCOUNT: ${name}] Gagal destroy client saat relogin: ${error.message}`);
+  }
+
+  registry.delete(name);
+  try {
+    startAccount(account, registry, deps);
+    return true;
+  } catch (error) {
+    console.error(`[ACCOUNT: ${name}] Relogin gagal: ${error.message}`);
+    return false;
+  }
+}
+
+/**
+ * Supervisor voice: memeriksa tiap interval apakah akun yang punya voiceChannelId
+ * benar-benar terhubung. Kalau tidak terhubung lebih lama dari `stuckMs`, akun
+ * itu di-relogin (bukan seluruh proses), dengan cooldown eksponensial supaya
+ * kegagalan permanen (mis. izin channel dicabut, token mati) tidak jadi loop
+ * relogin terus-menerus.
+ * @param {Map} registry Registry hasil startAll()
+ * @param {object} [deps] { intervalMs, stuckMs, Client, reconnectGraceMs } untuk testing
+ * @returns {{ stop: Function, check: Function }}
+ */
+function startVoiceSupervisor(registry, deps = {}) {
+  const intervalMs =
+    Number.isFinite(deps.intervalMs) && deps.intervalMs > 0
+      ? deps.intervalMs
+      : DEFAULT_VOICE_SUPERVISOR_INTERVAL_MS;
+  const stuckMs =
+    Number.isFinite(deps.stuckMs) && deps.stuckMs > 0 ? deps.stuckMs : DEFAULT_VOICE_STUCK_MS;
+  const cooldowns = new Map();
+
+  const check = () => {
+    const now = Date.now();
+    for (const [name, entry] of registry.entries()) {
+      if (!entry || entry.destroyed) continue;
+      const account = entry.account;
+      if (!account || !account.voiceChannelId) continue;
+      const client = entry.client;
+      // Belum login / login gagal: bukan kasus voice macet, jangan disentuh.
+      if (!client || !client.user) continue;
+
+      if (isVoiceHealthy(client, account)) {
+        entry.voiceUnhealthySince = null;
+        cooldowns.delete(name);
+        continue;
+      }
+
+      if (!entry.voiceUnhealthySince) {
+        entry.voiceUnhealthySince = now;
+        continue;
+      }
+      if (now - entry.voiceUnhealthySince < stuckMs) continue;
+
+      const cooldown = cooldowns.get(name);
+      if (cooldown && now < cooldown.until) continue;
+
+      const stuckSeconds = Math.round((now - entry.voiceUnhealthySince) / 1000);
+      const level = cooldown ? cooldown.level + 1 : 0;
+      const cooldownMs = Math.min(stuckMs * 2 ** level, MAX_VOICE_RELOGIN_COOLDOWN_MS);
+      cooldowns.set(name, { until: now + cooldownMs, level });
+      console.warn(
+        `[ACCOUNT: ${name}] Tidak terhubung ke voice ${stuckSeconds} detik, relogin client (cooldown ${Math.round(
+          cooldownMs / 60000,
+        )} menit)...`,
+      );
+      reloginAccount(name, registry, deps);
+    }
+  };
+
+  const timer = setInterval(check, intervalMs);
+  timer.unref?.();
+
+  return {
+    check,
+    stop() {
+      clearInterval(timer);
+    },
+  };
+}
+
 module.exports = {
   STATUS,
   ACCOUNTS_PATH,
@@ -476,4 +624,7 @@ module.exports = {
   startAccount,
   startAll,
   stopAll,
+  isVoiceHealthy,
+  reloginAccount,
+  startVoiceSupervisor,
 };
