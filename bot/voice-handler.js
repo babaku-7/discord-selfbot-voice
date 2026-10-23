@@ -235,10 +235,6 @@ function setupVoiceChannel(client, voiceChannelId, options = {}) {
     if (!isConnectedToTarget()) scheduleReconnect('Gateway tersambung kembali.');
   };
 
-  // Initial join tidak menunggu event voiceStateUpdate supaya tidak race dengan
-  // state update yang dikirim Discord saat proses autentikasi voice.
-  // Retry diaktifkan: kegagalan join pertama (mis. timeout) tidak boleh
-  // meninggalkan bot "online tapi tidak berada di voice" tanpa percobaan ulang.
   attemptJoin(true);
 
   client.on('voiceStateUpdate', handleVoiceStateUpdate);
