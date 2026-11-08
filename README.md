@@ -1,19 +1,18 @@
 # Discord Stay Voice
 
-Self-bot Discord sederhana yang hanya login dan tetap terhubung ke voice
+A minimal Discord self-bot that only logs in and stays connected to voice
 
 > [!WARNING]
-> **Risiko Penggunaan Self-Bot**
-> Menggunakan akun pengguna (self-bot) untuk otomatisasi adalah pelanggaran
-> terhadap [Persyaratan Layanan Discord](https://discord.com/terms) dan dapat
-> menyebabkan akun diblokir permanen. Gunakan dengan risiko Anda sendiri.
+> **Risks of Using a Self-Bot**
+> Using a user account (self-bot) for automation violates the
+> [Discord Terms of Service](https://discord.com/terms) and can get your
+> account permanently banned. Use it at your own risk.
 
 > [!IMPORTANT]
-> Proyek ini didasarkan pada `discord.js-selfbot-v13` yang dilisensikan di
-> bawah **GPL-3.0**. Oleh karena itu, proyek ini juga tunduk pada lisensi yang
-> sama.
+> This project is built on `discord.js-selfbot-v13`, which is licensed under
+> **GPL-3.0**. This project is therefore subject to the same license.
 
-## Setup Lokal
+## Local Setup
 
 ```bash
 npm ci
@@ -22,13 +21,13 @@ export VOICE_CHANNEL_ID=YOUR_VOICE_CHANNEL_ID
 npm start
 ```
 
-Bot akan bergabung ke voice channel setelah login dan mencoba bergabung
-kembali jika koneksinya terputus.
+The bot joins the voice channel after logging in and tries to rejoin if the
+connection drops.
 
 ## Custom Rich Presence
 
-Repository ini mendukung Custom Rich Presence yang dikonfigurasi melalui
-`.env` dan otomatis aktif setelah selfbot berhasil login.
+This repository supports Custom Rich Presence configured through `.env`. It
+is enabled automatically once the selfbot logs in successfully.
 
 ```env
 RPC_ENABLED=true
@@ -47,24 +46,24 @@ RPC_BUTTON2_URL=
 RPC_START_TIMESTAMP=true
 ```
 
-Fungsi masing-masing variable:
+What each variable does:
 
-* `RPC_ENABLED` — mengaktifkan/nonaktifkan RPC.
-* `RPC_APPLICATION_ID` — Application ID aplikasi Discord yang digunakan oleh Rich Presence.
-* `RPC_NAME` — nama activity.
-* `RPC_DETAILS` — detail activity.
-* `RPC_STATE` — state/status tambahan.
+* `RPC_ENABLED` — enables/disables RPC.
+* `RPC_APPLICATION_ID` — the ID of the Discord application used by Rich Presence.
+* `RPC_NAME` — activity name.
+* `RPC_DETAILS` — activity details.
+* `RPC_STATE` — additional state/status line.
 * `RPC_LARGE_IMAGE` — large image asset.
-* `RPC_LARGE_TEXT` — tooltip large image.
+* `RPC_LARGE_TEXT` — large image tooltip.
 * `RPC_SMALL_IMAGE` — small image asset.
-* `RPC_SMALL_TEXT` — tooltip small image.
-* `RPC_BUTTON1_NAME` — nama button pertama.
-* `RPC_BUTTON1_URL` — URL button pertama.
-* `RPC_BUTTON2_NAME` — nama button kedua.
-* `RPC_BUTTON2_URL` — URL button kedua.
-* `RPC_START_TIMESTAMP` — jika `true`, menampilkan elapsed time sejak RPC diaktifkan.
+* `RPC_SMALL_TEXT` — small image tooltip.
+* `RPC_BUTTON1_NAME` — label of the first button.
+* `RPC_BUTTON1_URL` — URL of the first button.
+* `RPC_BUTTON2_NAME` — label of the second button.
+* `RPC_BUTTON2_URL` — URL of the second button.
+* `RPC_START_TIMESTAMP` — when `true`, shows elapsed time since RPC was enabled.
 
-Contoh konfigurasi lengkap:
+Full configuration example:
 
 ```env
 RPC_ENABLED=true
@@ -83,84 +82,83 @@ RPC_BUTTON2_URL=https://example.com
 RPC_START_TIMESTAMP=true
 ```
 
-### Cara mendapatkan Application ID
+### How to get an Application ID
 
-Application ID berasal dari
+The Application ID comes from the
 [Discord Developer Portal](https://discord.com/developers/applications):
-buat atau pilih aplikasi, lalu salin **Application ID** dari halaman
-General Information.
+create or select an application, then copy the **Application ID** from the
+General Information page.
 
-Application ID **BUKAN**:
+An Application ID is **NOT**:
 
-* Discord User ID
-* Server/Guild ID
-* Channel ID
-* Discord token
+* a Discord User ID
+* a Server/Guild ID
+* a Channel ID
+* a Discord token
 
-Jangan pernah membagikan atau menampilkan Discord token di dokumentasi,
-konfigurasi publik, atau source code.
+Never share or expose a Discord token in documentation, public
+configuration, or source code.
 
-### Asset Image
+### Image Assets
 
-Image Rich Presence menggunakan asset yang terkait dengan aplikasi Discord
-yang dipakai (`RPC_APPLICATION_ID`). Unggah gambar di halaman aplikasi pada
-Developer Portal (Rich Presence / Art Assets), lalu isi `RPC_LARGE_IMAGE`
-atau `RPC_SMALL_IMAGE` dengan nama atau ID asset tersebut. `RPC_LARGE_TEXT`
-dan `RPC_SMALL_TEXT` menjadi tooltip saat kursor diarahkan ke gambar.
-Field yang dikosongkan akan dilewati.
+Rich Presence images use assets attached to the Discord application you are
+using (`RPC_APPLICATION_ID`). Upload the image on the application page in the
+Developer Portal (Rich Presence / Art Assets), then set `RPC_LARGE_IMAGE` or
+`RPC_SMALL_IMAGE` to the asset name or ID. `RPC_LARGE_TEXT` and
+`RPC_SMALL_TEXT` become tooltips when the cursor hovers over the image.
+Empty fields are skipped.
 
-Implementasi `RichPresence` yang dipakai project ini juga mendukung format
-image berikut:
+The `RichPresence` implementation used by this project also supports the
+following image formats:
 
-* ID asset aplikasi (angka 17–19 digit)
-* URL `cdn.discordapp.com` / `media.discordapp.net`
-* Media proxy (`mp:...`, `external/...`)
+* application asset ID (17–19 digit number)
+* `cdn.discordapp.com` / `media.discordapp.net` URL
+* media proxy (`mp:...`, `external/...`)
 * `youtube:...`, `spotify:...`, `twitch:...`
 
-Untuk URL gambar eksternal, tersedia API existing:
+For external image URLs, there is an existing API:
 
 ```js
 const { RichPresence } = require('./src/index.js');
 
-// Maksimal 2 URL yang valid, mengembalikan external assets via Discord API.
+// Up to 2 valid URLs, returns external assets via the Discord API.
 const assets = await RichPresence.getExternal(client, applicationId, imageUrl1, imageUrl2);
 ```
 
-Jika asset tidak valid, asset tersebut dilewati dengan warning dan RPC tetap
-berjalan tanpa image.
+Invalid assets are skipped with a warning, and RPC keeps running without an
+image.
 
 ### Buttons
 
-Maksimal 2 button dapat digunakan. Setiap button membutuhkan pasangan yang
-lengkap:
+At most 2 buttons can be used. Each button requires a complete pair:
 
 * name (`RPC_BUTTON1_NAME` / `RPC_BUTTON2_NAME`)
-* URL valid (`RPC_BUTTON1_URL` / `RPC_BUTTON2_URL`)
+* valid URL (`RPC_BUTTON1_URL` / `RPC_BUTTON2_URL`)
 
-Jika salah satu pasangan tidak lengkap atau URL tidak valid, button tersebut
-dilewati (dengan warning) dan tidak akan muncul. Validasi dilakukan oleh
+If a pair is incomplete or the URL is invalid, that button is skipped (with a
+warning) and will not appear. Validation is handled by
 `RichPresence.setButtons()`.
 
 ### Timestamp
 
-Jika `RPC_START_TIMESTAMP=true`, timestamp mulai dibuat sekali ketika RPC
-diaktifkan dan elapsed time berjalan berdasarkan timestamp tersebut
-(Discord yang menghitungnya, tanpa interval refresh).
+If `RPC_START_TIMESTAMP=true`, the timestamp is created once when RPC is
+enabled and the elapsed time is based on that timestamp (Discord calculates
+it, with no refresh interval).
 
-### Menonaktifkan RPC
+### Disabling RPC
 
 ```env
 RPC_ENABLED=false
 ```
 
-Voice functionality tetap berjalan ketika RPC dinonaktifkan atau konfigurasi
-RPC tidak lengkap (misalnya `RPC_APPLICATION_ID` kosong). Kegagalan RPC
-tidak menghentikan voice connection.
+Voice functionality keeps running when RPC is disabled or the RPC
+configuration is incomplete (for example, an empty `RPC_APPLICATION_ID`).
+RPC failures do not stop the voice connection.
 
-### Contoh hasil
+### Example output
 
-Gambaran teks status yang tampil (tampilan persis di Discord dapat berbeda
-tergantung client dan API Discord):
+An idea of the status text that appears (the exact rendering in Discord may
+differ depending on the client and the Discord API):
 
 ```text
 My Custom RPC
@@ -173,51 +171,49 @@ Online
 ```
 
 > [!NOTE]
-> Project ini menggunakan selfbot/user account, dan penggunaan selfbot dapat
-> bertentangan dengan Discord Terms of Service.
+> This project uses a selfbot/user account, and using a selfbot may conflict
+> with the Discord Terms of Service.
 
 ## Multi Account
 
-Satu process Node.js dapat menjalankan beberapa akun Discord secara
-bersamaan. Setiap akun memiliki `Client` sendiri, sehingga login, RPC, dan
-voice channel berjalan independen. Jika satu akun gagal, akun lain tetap
-berjalan.
+A single Node.js process can run multiple Discord accounts at the same time.
+Each account has its own `Client`, so login, RPC, and voice channel run
+independently. If one account fails, the others keep running.
 
-### Cara mengaktifkan multi-account
+### How to enable multi-account
 
-1. Salin template konfigurasi:
+1. Copy the configuration template:
 
    ```bash
    cp bot/accounts.example.json bot/accounts.json
    ```
 
-2. Isi `bot/accounts.json` dengan token dan konfigurasi masing-masing akun.
+2. Fill `bot/accounts.json` with the token and configuration for each account.
 
-3. Jalankan seperti biasa:
+3. Run as usual:
 
    ```bash
    npm start
    ```
 
-Jika `bot/accounts.json` tersedia, aplikasi memakai **multi-account mode**.
-Jika file tersebut tidak ada, aplikasi otomatis memakai **single-account
-mode** (konfigurasi `.env` lama: `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`,
-`RPC_*`).
+If `bot/accounts.json` exists, the app runs in **multi-account mode**. If the
+file does not exist, the app automatically uses **single-account mode** (the
+old `.env` configuration: `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`, `RPC_*`).
 
-### Format konfigurasi
+### Configuration format
 
-`bot/accounts.json` berisi array, setiap object adalah satu akun:
+`bot/accounts.json` contains an array; each object is one account:
 
 ```json
 [
   {
-    "name": "akun1",
-    "token": "TOKEN_AKUN_1",
+    "name": "account1",
+    "token": "ACCOUNT_1_TOKEN",
     "voiceChannelId": "VOICE_CHANNEL_ID_1",
     "rpc": {
       "enabled": true,
       "applicationId": "APPLICATION_ID_1",
-      "name": "Custom RPC Akun 1",
+      "name": "Account 1 Custom RPC",
       "details": "Playing",
       "state": "Online",
       "largeImage": "",
@@ -232,13 +228,13 @@ mode** (konfigurasi `.env` lama: `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`,
     }
   },
   {
-    "name": "akun2",
-    "token": "TOKEN_AKUN_2",
+    "name": "account2",
+    "token": "ACCOUNT_2_TOKEN",
     "voiceChannelId": "VOICE_CHANNEL_ID_2",
     "rpc": {
       "enabled": true,
       "applicationId": "APPLICATION_ID_2",
-      "name": "Custom RPC Akun 2",
+      "name": "Account 2 Custom RPC",
       "details": "Another Activity",
       "state": "Indonesia",
       "largeImage": "",
@@ -255,81 +251,89 @@ mode** (konfigurasi `.env` lama: `DISCORD_TOKEN`, `VOICE_CHANNEL_ID`,
 ]
 ```
 
-* `name` — nama akun untuk prefix log (`[ACCOUNT: akun1]`). Wajib unik.
-* `token` — token akun Discord. Wajib; akun dengan token kosong dilewati.
-* `voiceChannelId` — voice channel akun tersebut. Boleh kosong (voice
-  dilewati untuk akun itu; TIDAK fallback ke `VOICE_CHANNEL_ID` di `.env`).
-  Setiap akun dapat memakai channel berbeda, dan dua akun boleh memakai
-  channel yang sama.
-* `rpc` — konfigurasi Rich Presence akun tersebut (opsional). Field-nya sama
-  seperti variable `RPC_*` pada section Custom Rich Presence. Setiap akun
-  memiliki RPC dan timestamp sendiri yang tidak tertukar.
-* `stream` — konfigurasi screenshare / Go Live akun tersebut (opsional).
-  Lihat section Screenshare (Go Live).
+* `name` — account name used as the log prefix (`[ACCOUNT: account1]`). Must
+  be unique.
+* `token` — the Discord account token. Required; accounts with an empty token
+  are skipped.
+* `voiceChannelId` — the voice channel for that account. May be empty (voice
+  is skipped for that account; it does **NOT** fall back to
+  `VOICE_CHANNEL_ID` in `.env`). Each account can use a different channel,
+  and two accounts may use the same channel.
+* `rpc` — the Rich Presence configuration for that account (optional). The
+  fields are the same as the `RPC_*` variables in the Custom Rich Presence
+  section. Each account has its own RPC and timestamp, which do not get mixed
+  up.
+* `stream` — the screenshare / Go Live configuration for that account
+  (optional). See the Screenshare (Go Live) section.
 
-Jangan menaruh token asli di README, issue, atau commit.
+Do not put real tokens in the README, issues, or commits.
 
 ### Screenshare (Go Live)
 
-Akun bisa menyalakan badge **LIVE** di voice channel (Go Live / screenshare),
-bukan sekadar status RPC "Streaming" di profil. Ini memutar video dari file
-secara loop, jadi tidak perlu capture layar.
+An account can light up the **LIVE** badge in a voice channel (Go Live /
+screenshare), not just a "Streaming" RPC status on the profile. It loops a
+video from a file, so no screen capture is needed.
 
-Syarat: `ffmpeg` harus tersedia di `PATH` (mis. `sudo apt-get install -y ffmpeg`).
-Tanpa ffmpeg, screenshare dilewati dan akun tetap bergabung ke voice seperti biasa.
+Requirement: `ffmpeg` must be available in `PATH` (e.g.
+`sudo apt-get install -y ffmpeg`). Without ffmpeg, screenshare is skipped and
+the account still joins voice as usual.
 
 ```json
 {
-  "name": "akun1",
+  "name": "account1",
   "token": "TOKEN",
   "voiceChannelId": "VOICE_CHANNEL_ID",
   "stream": {
     "enabled": true,
-    "source": "/path/ke/video.mp4",
+    "source": "/path/to/video.mp4",
     "fps": 5,
     "bitrate": 100
   }
 }
 ```
 
-* `enabled` — wajib `true` untuk menyalakan screenshare.
-* `source` — path file video lokal atau URL (`http(s)`) yang bisa dibaca ffmpeg.
-* `fps` — frame rate kirim, di-clamp ke `1..30`. Default `10`. Semakin kecil semakin hemat CPU.
-* `bitrate` — bitrate video dalam kbps, di-clamp ke `1..8000`. Default `200`.
-* `restartDelayMs` — jeda awal sebelum restart otomatis kalau encoder berhenti
-  (default `5000`, naik 2x tiap percobaan, maksimal 10 percobaan).
+* `enabled` — must be `true` to turn on screenshare.
+* `source` — path to a local video file or a URL (`http(s)`) that ffmpeg can
+  read.
+* `fps` — send frame rate, clamped to `1..30`. Default `10`. Lower is cheaper
+  on CPU.
+* `bitrate` — video bitrate in kbps, clamped to `1..8000`. Default `200`.
+* `restartDelayMs` — initial delay before an automatic restart when the
+  encoder stops (default `5000`, doubles on each attempt, capped at 10
+  attempts).
 
-Catatan:
+Notes:
 
-* Satu proses `ffmpeg` per akun yang streaming. Video-only (tanpa audio) jauh
-  lebih ringan: 480p @ 5 fps sekitar 1-2% CPU dan ~60 MB RAM. 720p30 tidak
-  disarankan di VPS 1 GB.
-* Video di-loop otomatis (`-stream_loop -1 -re`), jadi pakai klip pendek.
-* Kalau proses `ffmpeg` mati (file hilang, OOM-kill, decode error), stream
-  di-restart otomatis dengan backoff, dibatasi `10` percobaan. Setelah itu
-  menyerah dan hanya menulis error ke log sampai voice rejoin.
-* Screenshare ikut menyala lagi saat rejoin voice / watchdog menyambungkan ulang,
-  dan dimatikan saat voice putus atau bot shutdown (tidak ada ffmpeg menggantung).
-* Verifikasi nyata ada di log: `Cek badge LIVE: self_stream=true`. Nilai ini
-  berasal dari `VOICE_STATE_UPDATE` Discord, bukan tebakan lokal.
-* Untuk sekadar status ungu "Streaming" di profil (tanpa media), gunakan
-  `rpc.type: "STREAMING"` + `rpc.url` — bukan fitur screenshare ini.
+* One `ffmpeg` process per streaming account. Video-only (no audio) is much
+  lighter: 480p @ 5 fps is around 1-2% CPU and ~60 MB RAM. 720p30 is not
+  recommended on a 1 GB VPS.
+* The video loops automatically (`-stream_loop -1 -re`), so use a short clip.
+* If the `ffmpeg` process dies (missing file, OOM kill, decode error), the
+  stream restarts automatically with backoff, limited to `10` attempts. After
+  that it gives up and only writes errors to the log until voice rejoins.
+* Screenshare turns back on when voice rejoins / the watchdog reconnects, and
+  is shut down when voice disconnects or the bot shuts down (no lingering
+  ffmpeg process).
+* Real verification is in the log: `Cek badge LIVE: self_stream=true`. This
+  value comes from Discord's `VOICE_STATE_UPDATE`, not a local guess.
+* To get just the purple "Streaming" status on the profile (no media), use
+  `rpc.type: "STREAMING"` + `rpc.url` — that is not this screenshare feature.
 
-### Cara kembali ke mode single-account
+### How to go back to single-account mode
 
-Hapus atau rename `bot/accounts.json`, lalu pastikan `.env` berisi
-`DISCORD_TOKEN`, `VOICE_CHANNEL_ID`, dan (opsional) `RPC_*`:
+Delete or rename `bot/accounts.json`, then make sure `.env` contains
+`DISCORD_TOKEN`, `VOICE_CHANNEL_ID`, and (optionally) `RPC_*`:
 
 ```bash
 mv bot/accounts.json bot/accounts.json.bak
 npm start
 ```
 
-### Menjalankan multi-account di Render (Secret File)
+### Running multi-account on Render (Secret File)
 
-Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
+On Render you do not need to commit `bot/accounts.json`. Use a Secret File:
 
-1. Di Render Dashboard, buka service → **Environment → Secret Files →
+1. In the Render Dashboard, open the service → **Environment → Secret Files →
    Add Secret File**.
 2. Filename:
 
@@ -337,12 +341,12 @@ Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
    accounts.json
    ```
 
-3. Contents (isi dengan konfigurasi akun masing-masing):
+3. Contents (fill in each account's configuration):
 
    ```json
    [
      {
-       "name": "akun1",
+       "name": "account1",
        "token": "YOUR_DISCORD_TOKEN",
        "voiceChannelId": "YOUR_VOICE_CHANNEL_ID",
        "rpc": {
@@ -365,58 +369,57 @@ Di Render tidak perlu commit `bot/accounts.json`. Gunakan Secret File:
    ]
    ```
 
-4. Deploy ulang. Aplikasi otomatis mendeteksi secret file tersebut
-   (dicari berurutan di `bot/accounts.json`, `accounts.json` di root
-   service, lalu `/etc/secrets/accounts.json`) dan berjalan dalam
-   multi-account mode.
+4. Redeploy. The app detects the secret file automatically (searched in
+   order at `bot/accounts.json`, `accounts.json` in the service root, then
+   `/etc/secrets/accounts.json`) and runs in multi-account mode.
 
-`accounts.json` berisi token sehingga **tidak boleh di-commit ke Git**
-(file ini sudah masuk `.gitignore`; yang di-commit hanya
-`bot/accounts.example.json` sebagai template).
+`accounts.json` contains tokens, so it **must not be committed to Git** (the
+file is already in `.gitignore`; only `bot/accounts.example.json` is
+committed, as a template).
 
 ### Security
 
-* `bot/accounts.json` berisi token dan **sudah masuk `.gitignore`** — file
-  ini tidak akan ter-commit. Yang di-commit hanya
-  `bot/accounts.example.json` sebagai template.
-* Token tidak pernah dicetak ke log (bahkan saat login gagal, yang tampil
-  hanya pesan error tanpa token).
+* `bot/accounts.json` contains tokens and **is already in `.gitignore`** —
+  it will not be committed. Only `bot/accounts.example.json` is committed, as
+  a template.
+* Tokens are never printed to the log (even when login fails, only the error
+  message appears, without the token).
 
 > [!WARNING]
-> Penggunaan selfbot/automasi user token dapat melanggar Discord Terms of
-> Service. Setiap akun yang dijalankan adalah tanggung jawab pemiliknya;
-> kegagalan atau penalti pada satu akun tidak memengaruhi akun lain secara
-> teknis, tetapi semua akun menanggung risiko yang sama.
+> Using selfbots / user token automation may violate the Discord Terms of
+> Service. Each account that runs is the responsibility of its owner; a
+> failure or penalty on one account does not technically affect the others,
+> but every account carries the same risk.
 
-## Deploy ke Render
+## Deploying to Render
 
-1. Hubungkan repository ke Render sebagai Web Service.
-2. Gunakan **Build Command** `npm ci`.
-3. Gunakan **Start Command** `npm start`.
-4. Tambahkan environment variables berikut:
-   - `DISCORD_TOKEN`: token akun Discord.
-   - `VOICE_CHANNEL_ID`: ID voice channel tujuan.
-   - Variable `RPC_*` (opsional, lihat section Custom Rich Presence).
-   - Untuk multi-account, gunakan Secret File `accounts.json` atau sediakan
-     file `bot/accounts.json` (lihat section Multi Account).
+1. Connect the repository to Render as a Web Service.
+2. Use **Build Command** `npm ci`.
+3. Use **Start Command** `npm start`.
+4. Add the following environment variables:
+   - `DISCORD_TOKEN`: the Discord account token.
+   - `VOICE_CHANNEL_ID`: the target voice channel ID.
+   - `RPC_*` variables (optional, see the Custom Rich Presence section).
+   - For multi-account, use the `accounts.json` Secret File or provide a
+     `bot/accounts.json` file (see the Multi Account section).
 
-Health check tersedia di port `PORT` (default `3000`), listen di `127.0.0.1`
-secara default:
+A health check is available on port `PORT` (default `3000`), listening on
+`127.0.0.1` by default:
 
-* `GET /health` — readiness: `200` kalau minimal satu akun sudah login
-  (ready), `503` kalau tidak ada. Body JSON berisi status per akun
-  (tanpa credential).
-* `GET /health/live` — liveness: selalu `200` selama proses hidup.
-* Route lain dibalas `404`.
-* Kalau `HEALTH_TOKEN` diisi, semua request harus menyertakan header
-  `Authorization: Bearer <token>` (`401` kalau tidak).
-* Health server tidak pernah terbuka tanpa autentikasi: `HOST=0.0.0.0`
-  (non-loopback) hanya dipakai kalau `HEALTH_TOKEN` diisi — kalau tidak,
-  server tetap di-bind ke `127.0.0.1` disertai warning di log.
-* Status akun mengikuti kondisi nyata: gateway putus sementara →
-  `reconnecting` (kembali `ready` kalau pulih; turun ke `error` kalau tidak
-  pulih dalam 60 detik), gateway mati permanen atau sesi invalid → `error`
-  langsung.
+* `GET /health` — readiness: `200` if at least one account is logged in
+  (ready), `503` if none are. The JSON body contains per-account status
+  (without credentials).
+* `GET /health/live` — liveness: always `200` while the process is alive.
+* Other routes return `404`.
+* If `HEALTH_TOKEN` is set, every request must include an
+  `Authorization: Bearer <token>` header (`401` otherwise).
+* The health server never opens without authentication: `HOST=0.0.0.0`
+  (non-loopback) is only used when `HEALTH_TOKEN` is set — otherwise the
+  server stays bound to `127.0.0.1` with a warning in the log.
+* Account status reflects real conditions: a temporary gateway disconnect →
+  `reconnecting` (back to `ready` once recovered; drops to `error` if not
+  recovered within 60 seconds), a permanently dead gateway or invalid
+  session → `error` immediately.
 
 ## License
 
